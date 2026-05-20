@@ -1,0 +1,107 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+      - run: dart pub get
+      - run: dart format --output=none --set-exit-if-changed .
+      - run: dart analyze --fatal-infos
+
+  test:
+    needs: analyze
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+      - run: dart pub get
+      - name: Build knot for tests
+        shell: bash
+        run: |
+          dart build cli -o "${RUNNER_TEMP:-/tmp}/knot-build"
+          ext=""
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
+          echo "KNOT_TEST_BIN=${RUNNER_TEMP:-/tmp}/knot-build/bundle/bin/knot$ext" >> "$GITHUB_ENV"
+      - name: Knot bundle size
+        shell: bash
+        run: |
+          bundle="${RUNNER_TEMP:-/tmp}/knot-build/bundle"
+          echo "::group::bundle contents"
+          find "$bundle" -type f -exec ls -lh {} + 2>/dev/null | awk '{print $5, $NF}'
+          echo "::endgroup::"
+          du -sh "$bundle"
+      - run: dart test
+
+  aot-smoke:
+    needs: analyze
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+      - name: Build aot_smoke
+        shell: bash
+        working-directory: tools/aot_smoke
+        run: |
+          dart pub get
+          dart build cli -o ../../build/aot-smoke
+      - name: Run aot_smoke
+        shell: bash
+        run: ./build/aot-smoke/bundle/bin/aot_smoke
+
+  smoke-build:
+    needs: analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+      - run: dart pub get
+      - run: dart build cli -o build/cli-bundle
+      - run: ./build/cli-bundle/bundle/bin/knot --version
+
+  ffigen-drift:
+    needs: analyze
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: ffigen/linux.dart
+            generated: lib/src/ffi/generated/posix_linux.g.dart
+          - os: macos-latest
+            script: ffigen/macos.dart
+            generated: lib/src/ffi/generated/posix_macos.g.dart
+          - os: windows-latest
+            script: ffigen/windows.dart
+            generated: lib/src/ffi/generated/windows_kernel32.g.dart
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+      - run: dart pub get
+      - name: Regenerate bindings
+        shell: bash
+        run: dart run ${{ matrix.script }}
+      - name: Verify no drift
+        shell: bash
+        run: |
+          if ! git diff --exit-code -- ${{ matrix.generated }}; then
+            echo "::error::ffigen drift detected in ${{ matrix.generated }}."
+            echo "Run 'dart run ${{ matrix.script }}' locally and commit the result."
+            exit 1
+          fi

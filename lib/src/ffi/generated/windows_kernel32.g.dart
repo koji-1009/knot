@@ -4,37 +4,37 @@
 // ignore_for_file: type=lint, unused_import
 import 'dart:ffi' as ffi;
 
-const int SYMBOLIC_LINK_FLAG_DIRECTORY = 0x1;
-const int SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE = 0x2;
+@ffi.Native<ffi.UnsignedLong Function()>()
+external int GetLastError();
 
 @ffi.Native<
-  ffi.Int32 Function(
-    ffi.Pointer<ffi.Uint16>,
-    ffi.Pointer<ffi.Uint16>,
-    ffi.Pointer<ffi.Void>,
+  ffi.Int Function(
+    ffi.Pointer<ffi.WChar>,
+    ffi.Pointer<ffi.WChar>,
+    ffi.Pointer<_SECURITY_ATTRIBUTES>,
   )
->(assetId: 'kernel32.dll', symbol: 'CreateHardLinkW')
+>()
 external int CreateHardLinkW(
-  ffi.Pointer<ffi.Uint16> lpFileName,
-  ffi.Pointer<ffi.Uint16> lpExistingFileName,
-  ffi.Pointer<ffi.Void> lpSecurityAttributes,
+  ffi.Pointer<ffi.WChar> lpFileName,
+  ffi.Pointer<ffi.WChar> lpExistingFileName,
+  ffi.Pointer<_SECURITY_ATTRIBUTES> lpSecurityAttributes,
 );
 
 @ffi.Native<
   ffi.UnsignedChar Function(
-    ffi.Pointer<ffi.Uint16>,
-    ffi.Pointer<ffi.Uint16>,
-    ffi.Uint32,
+    ffi.Pointer<ffi.WChar>,
+    ffi.Pointer<ffi.WChar>,
+    ffi.UnsignedLong,
   )
->(assetId: 'kernel32.dll', symbol: 'CreateSymbolicLinkW')
+>()
 external int CreateSymbolicLinkW(
-  ffi.Pointer<ffi.Uint16> lpSymlinkFileName,
-  ffi.Pointer<ffi.Uint16> lpTargetFileName,
+  ffi.Pointer<ffi.WChar> lpSymlinkFileName,
+  ffi.Pointer<ffi.WChar> lpTargetFileName,
   int dwFlags,
 );
 
-@ffi.Native<ffi.Uint32 Function()>(
-  assetId: 'kernel32.dll',
-  symbol: 'GetLastError',
-)
-external int GetLastError();
+final class _SECURITY_ATTRIBUTES extends ffi.Opaque {}
+
+const int SYMBOLIC_LINK_FLAG_DIRECTORY = 1;
+
+const int SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE = 2;

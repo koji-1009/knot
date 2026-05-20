@@ -123,7 +123,14 @@ class Store {
       // tar header are untrustworthy. The extractor already chmod'd
       // the source file, so a successful rename preserves the mode.
       final isExecutable = !Platform.isWindows && (stat.mode & 0x49) != 0;
-      final relativePath = p.relative(entry.path, from: extractedRoot.path);
+      // Index entries persist across platforms; force forward-slash
+      // separators so a tree ingested on Windows materializes
+      // correctly when the same store is read on POSIX (and vice
+      // versa). All consumers re-join via `p.join`, which accepts
+      // either separator regardless of host OS.
+      final relativePath = p.posix.joinAll(
+        p.split(p.relative(entry.path, from: extractedRoot.path)),
+      );
       if (!await dest.exists()) {
         await Directory(p.dirname(dest.path)).create(recursive: true);
         // POSIX rename atomically replaces dest if a concurrent ingest
