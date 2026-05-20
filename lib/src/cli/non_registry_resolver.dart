@@ -44,16 +44,17 @@ class NonRegistryResolver {
   final Store store;
   final http.Client _client;
 
-  Future<NonRegistryResolution> resolve(DependencySpec spec) => switch (spec
-      .protocol) {
-    SpecifierProtocol.file => _resolveFile(spec),
-    SpecifierProtocol.link => _resolveLink(spec),
-    SpecifierProtocol.https => _resolveHttps(spec),
-    SpecifierProtocol.git => _resolveGit(spec),
-    SpecifierProtocol.semver || SpecifierProtocol.workspace => throw StateError(
-      'NonRegistryResolver received a ${spec.protocol.name} spec',
-    ),
-  };
+  Future<NonRegistryResolution> resolve(DependencySpec spec) =>
+      switch (spec.protocol) {
+        SpecifierProtocol.file => _resolveFile(spec),
+        SpecifierProtocol.link => _resolveLink(spec),
+        SpecifierProtocol.https => _resolveHttps(spec),
+        SpecifierProtocol.git => _resolveGit(spec),
+        SpecifierProtocol.semver ||
+        SpecifierProtocol.workspace => throw StateError(
+          'NonRegistryResolver received a ${spec.protocol.name} spec',
+        ),
+      };
 
   // ---- file: ------------------------------------------------------------
   Future<NonRegistryResolution> _resolveFile(DependencySpec spec) async {
