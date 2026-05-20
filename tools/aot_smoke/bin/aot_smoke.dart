@@ -28,9 +28,7 @@ import 'package:boringssl_dart/boringssl_dart.dart';
 
 void main() {
   final key = EcKey.generate('P-256');
-  final message = Uint8List.fromList(
-    List<int>.generate(32, (i) => i & 0xFF),
-  );
+  final message = Uint8List.fromList(List<int>.generate(32, (i) => i & 0xFF));
 
   final sig = Ecdsa.sign(key, message, 'SHA-256');
   final ok = Ecdsa.verify(key, sig, message, 'SHA-256');
@@ -44,9 +42,7 @@ void main() {
   final tampered = Uint8List.fromList(message)..[0] ^= 0x01;
   final badOk = Ecdsa.verify(key, sig, tampered, 'SHA-256');
   if (badOk) {
-    throw StateError(
-      'AOT smoke: tampered message unexpectedly verified',
-    );
+    throw StateError('AOT smoke: tampered message unexpectedly verified');
   }
 
   // Touch the SPKI parser the install path actually calls — the
@@ -71,14 +67,34 @@ Uint8List _spkiP256(Uint8List x, Uint8List y) {
   final point = Uint8List.fromList([0x04, ...x, ...y]);
   // BIT STRING wrapping the uncompressed point.
   final bitString = Uint8List.fromList([
-    0x03, point.length + 1, 0x00,
+    0x03,
+    point.length + 1,
+    0x00,
     ...point,
   ]);
   // ALG ID: SEQUENCE { OID 1.2.840.10045.2.1, OID 1.2.840.10045.3.1.7 }
   final algId = Uint8List.fromList([
-    0x30, 0x13,
-    0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
-    0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07,
+    0x30,
+    0x13,
+    0x06,
+    0x07,
+    0x2A,
+    0x86,
+    0x48,
+    0xCE,
+    0x3D,
+    0x02,
+    0x01,
+    0x06,
+    0x08,
+    0x2A,
+    0x86,
+    0x48,
+    0xCE,
+    0x3D,
+    0x03,
+    0x01,
+    0x07,
   ]);
   final inner = Uint8List.fromList([...algId, ...bitString]);
   return Uint8List.fromList([0x30, inner.length, ...inner]);

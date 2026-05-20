@@ -1,4 +1,3 @@
-
 /// One npm security advisory. Mirrors the shape returned by the npm
 /// registry's `/-/npm/v1/security/advisories/bulk` endpoint.
 ///

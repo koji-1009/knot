@@ -1,4 +1,3 @@
-
 /// Schema version emitted by this build's lockfile writer.
 const int knotLockfileVersion = 1;
 

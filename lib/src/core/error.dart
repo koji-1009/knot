@@ -1,4 +1,3 @@
-
 /// Base class for all errors raised by knot.
 sealed class KnotError implements Exception {
   const KnotError(this.message, {this.cause});

@@ -24,12 +24,7 @@ Future<String> knotTestBinary() {
 
 final _buildOnce = _LazyFuture<String>(() async {
   final tmp = await Directory.systemTemp.createTemp('knot-test-bin-');
-  final result = await Process.run('dart', [
-    'build',
-    'cli',
-    '-o',
-    tmp.path,
-  ]);
+  final result = await Process.run('dart', ['build', 'cli', '-o', tmp.path]);
   if (result.exitCode != 0) {
     throw StateError(
       'failed to build knot for tests: ${result.stdout}\n${result.stderr}',

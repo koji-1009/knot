@@ -1,4 +1,3 @@
-
 /// Default npm registry endpoint.
 const String defaultRegistry = 'https://registry.npmjs.org/';
 

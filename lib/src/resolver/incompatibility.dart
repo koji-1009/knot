@@ -1,4 +1,3 @@
-
 import 'term.dart';
 
 /// A conjunction of terms that cannot all hold simultaneously. Encodes the

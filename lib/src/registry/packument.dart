@@ -1,4 +1,3 @@
-
 /// A simplified npm packument — only the fields knot consumes during
 /// resolution. Storing the full packument as `Map<String, dynamic>` wastes
 /// memory and pins JSON strings.

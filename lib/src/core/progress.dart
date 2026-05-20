@@ -1,4 +1,3 @@
-
 /// Discrete progress events emitted during an install.
 sealed class ProgressEvent {
   const ProgressEvent();
