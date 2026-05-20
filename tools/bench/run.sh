@@ -153,7 +153,16 @@ median() {
     }'
 }
 
-format_ms() { awk -v s="$1" 'BEGIN {printf "%d ms", s * 1000}'; }
+format_ms() {
+  # `%d` truncates to zero for sub-ms runs (bun-warm hits this);
+  # `%.1f` keeps a digit for small values without faking precision
+  # at the second scale.
+  awk -v s="$1" 'BEGIN {
+    ms = s * 1000
+    if (ms >= 100) printf "%d ms", ms
+    else           printf "%.1f ms", ms
+  }'
+}
 format_mb() { awk -v b="$1" 'BEGIN {printf "%.1f MB", b / 1024 / 1024}'; }
 
 # --- main loop ---------------------------------------------------------------

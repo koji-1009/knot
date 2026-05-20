@@ -46,15 +46,14 @@ runs, because the link hook is not invoked.
 
 ## Benchmark
 
-`tools/bench/run.sh` measures cold + warm install time and peak memory for
-a chosen fixture across knot and other package managers. Cold runs wipe each
-tool's global cache/store first; warm runs only clear `node_modules`.
+`tools/bench/run.sh` measures cold + warm install time and peak memory across
+knot, pnpm, npm, and bun on a chosen fixture. Cold runs wipe each tool's
+global cache/store first; warm runs only clear `node_modules`. Each scenario
+is run N times and the median is reported.
 
 ```
-./tools/bench/run.sh --fixture vite-react --tools knot,pnpm,bun --runs 5
+./tools/bench/run.sh --fixture vite-react --tools knot,pnpm,npm,bun --runs 3
 ```
-
-Options:
 
 | Flag | Default | Notes |
 |------|---------|-------|
@@ -63,23 +62,59 @@ Options:
 | `--tools LIST` | `knot,pnpm` | Comma-separated subset of `knot,pnpm,npm,bun` |
 | `--knot-bin PATH` | (auto-build) | Reuse an existing knot binary instead of running `dart build cli` |
 
-The script reports a markdown table of medians, e.g.
+macOS and Linux are supported (`/usr/bin/time -lp` / `-v`); Windows is not.
 
-```
-## bench: vite-react (median of 5 runs)
+### Reference run
+
+Sample numbers from one author run on **macOS arm64 (M2)**, fixture
+`vite-react` (16 packages: react + react-dom + vite with its transitive
+deps), measured 2026-05-20.
+
+Pinned versions (everything below is sensitive to the package manager's
+implementation language and release, especially while bun is mid-migration
+from Zig to Rust — these numbers belong to **this** set of versions):
+
+| component | version |
+|-----------|---------|
+| Dart SDK (used to build knot) | 3.12.0 |
+| knot | HEAD of this branch |
+| pnpm | 11.1.3 |
+| npm | 11.11.0 |
+| bun | 1.3.14 |
 
 | tool | scenario | time | peak memory |
 |------|----------|------|-------------|
-| knot | cold     | 300 ms  | ~100 MB |
-| knot | warm     | 55 ms   | ~12 MB  |
-| pnpm | cold     | 5700 ms | ~400 MB |
-| pnpm | warm     | 230 ms  | ~275 MB |
+| knot | cold     | 1730 ms        | 207 MB |
+| knot | warm     | 59.4 ± 1.0 ms  |  10 MB |
+| pnpm | cold     | 1930 ms        | 396 MB |
+| pnpm | warm     | 290.6 ± 1.9 ms | 267 MB |
+| npm  | cold     | 8830 ms        | 380 MB |
+| npm  | warm     | 424.3 ± 19.9 ms | 107 MB |
+| bun  | cold     | 1950 ms        | 131 MB |
+| bun  | warm     | 8.5 ± 0.3 ms   |   7 MB |
+
+Cold times are the median of 3 `tools/bench/run.sh` runs (network-bound, day
+to day variance dwarfs measurement precision). Warm times come from
+`hyperfine --warmup 2 --runs 10` (mean ± σ). Peak memory is `/usr/bin/time
+-lp`'s `peak memory footprint`.
+
+Rerun in your own environment with the current versions for an up-to-date
+picture — bun's Zig→Rust migration in particular is in flux.
+
+### Binary size
+
+`dart build cli` produces a self-contained bundle under `build/bundle/`:
+
+```
+7.9M  bundle/bin/knot
+505K  bundle/lib/libboringssl_dart.dylib
+----
+8.4M  total
 ```
 
-Numbers depend on hardware, network conditions, and tool versions; the table
-above is from a macOS arm64 laptop fetching against the public npm registry
-and is illustrative, not normative. macOS and Linux are supported (different
-`/usr/bin/time` flags); Windows is not.
+(macOS arm64. Linux / Windows are within 10% of these numbers.) For
+comparison, a typical `node_modules/pnpm/` install on Linux x64 is ~30 MB;
+`bun`'s standalone binary is ~70 MB.
 
 ## License
 
