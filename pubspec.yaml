@@ -1,0 +1,30 @@
+name: knot
+description: npm-compatible package manager written in Dart.
+publish_to: none
+version: 0.0.1-dev
+
+environment:
+  sdk: ^3.12.0
+
+executables:
+  knot: knot
+
+dependencies:
+  args: ^2.5.0
+  boringssl_dart:
+    git:
+      url: https://github.com/koji-1009/boringssl_dart
+  ffi: ^2.1.0
+  glob: ^2.1.0
+  http: ^1.6.0
+  path: ^1.9.0
+  pool: ^1.5.0
+  pub_semver: ^2.1.0
+  tar: ^2.0.0
+
+dev_dependencies:
+  test: ^1.31.0
+  test_descriptor: ^2.0.0
+  test_process: ^2.1.0
+  lints: ^6.0.0
+  ffigen: ^20.1.1

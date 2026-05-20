@@ -1,0 +1,4 @@
+tags:
+  network:
+    description: >-
+      Requires live network access (npm registry). Gated by KNOT_NETWORK=1.
