@@ -51,18 +51,13 @@ class ViewCommand extends Command<int> {
         'versions': packument.versions.keys.toList(),
       };
     }
-    switch (field) {
-      case 'name':
-        return packument.name;
-      case 'versions':
-        return packument.versions.keys.toList();
-      case 'dist-tags':
-        return packument.distTags;
-      case 'latest':
-        return packument.latest;
-      default:
-        // Unsupported dot-path → null.
-        return null;
-    }
+    // Unsupported dot-path → null.
+    return switch (field) {
+      'name' => packument.name,
+      'versions' => packument.versions.keys.toList(),
+      'dist-tags' => packument.distTags,
+      'latest' => packument.latest,
+      _ => null,
+    };
   }
 }
