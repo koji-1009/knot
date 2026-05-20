@@ -187,7 +187,7 @@ void main() {
             name: 'local',
             version: '1.0.0',
             // No tarball → not a registry-resolved package.
-            resolution: Resolution.tarball(tarball: null, directory: './l'),
+            resolution: Resolution.tarball(tarball: null),
           ),
         },
       );
