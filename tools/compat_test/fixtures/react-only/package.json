@@ -1,0 +1,8 @@
+{
+  "name": "knot-compat-react-only",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.0.0"
+  }
+}

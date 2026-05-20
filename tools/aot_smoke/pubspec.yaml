@@ -1,0 +1,15 @@
+name: knot_aot_smoke
+description: >-
+  CI-only AOT smoke for the boringssl_dart binding wired into knot.
+  See `bin/aot_smoke.dart`. Not user-facing; lives in its own package
+  so the main knot pubspec stays focused on the CLI app.
+publish_to: none
+version: 0.0.0
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  boringssl_dart:
+    git:
+      url: https://github.com/koji-1009/boringssl_dart
