@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   analyze:
@@ -73,6 +74,35 @@ jobs:
       - run: dart pub get
       - run: dart build cli -o build/cli-bundle
       - run: ./build/cli-bundle/bundle/bin/knot --version
+
+  # Install-time benchmark. Informational only — does NOT fail the
+  # build, because GH-hosted runner variance + npm registry latency
+  # would produce constant false positives if used as a regression
+  # gate. Result tables land in the step summary so a PR reviewer
+  # can eyeball cold/warm regressions. Ubuntu only: macOS runners
+  # have higher variance and the trend signal we want is "did this
+  # PR regress on a typical Linux deploy target".
+  bench:
+    needs: analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        with:
+          version: latest
+      - run: dart pub get
+      - name: Run bench
+        shell: bash
+        run: |
+          ./tools/bench/run.sh \
+            --fixture vite-react \
+            --tools knot,pnpm \
+            --runs 3 \
+            | tee bench.md
+      - name: Publish to step summary
+        shell: bash
+        run: cat bench.md >> "$GITHUB_STEP_SUMMARY"
 
   ffigen-drift:
     needs: analyze

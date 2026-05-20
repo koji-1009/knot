@@ -9,3 +9,6 @@
 compat_test/fixtures/*/package-lock.json
 compat_test/fixtures/*/pnpm-lock.yaml
 compat_test/fixtures/*/knot-lock.yaml
+compat_test/fixtures/*/bun.lock
+compat_test/fixtures/*/bun.lockb
+compat_test/fixtures/*/yarn.lock
