@@ -5,7 +5,7 @@
 import 'dart:ffi' as ffi;
 
 @ffi.Native<ffi.Int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>()
-external int link(ffi.Pointer<ffi.Char> arg0, ffi.Pointer<ffi.Char> arg1);
+external int link(ffi.Pointer<ffi.Char> __from, ffi.Pointer<ffi.Char> __to);
 
 @ffi.Native<
   ffi.Int Function(
@@ -17,18 +17,18 @@ external int link(ffi.Pointer<ffi.Char> arg0, ffi.Pointer<ffi.Char> arg1);
   )
 >()
 external int linkat(
-  int olddirfd,
-  ffi.Pointer<ffi.Char> oldpath,
-  int newdirfd,
-  ffi.Pointer<ffi.Char> newpath,
-  int flags,
+  int __fromfd,
+  ffi.Pointer<ffi.Char> __from,
+  int __tofd,
+  ffi.Pointer<ffi.Char> __to,
+  int __flags,
 );
 
 @ffi.Native<ffi.Int Function(ffi.Pointer<ffi.Char>)>()
-external int unlink(ffi.Pointer<ffi.Char> arg0);
+external int unlink(ffi.Pointer<ffi.Char> __name);
 
-@ffi.Native<ffi.Int Function(ffi.Pointer<ffi.Char>, ffi.Uint32)>()
-external int chmod(ffi.Pointer<ffi.Char> arg0, int arg1);
+@ffi.Native<ffi.Int Function(ffi.Pointer<ffi.Char>, ffi.UnsignedInt)>()
+external int chmod(ffi.Pointer<ffi.Char> __file, int __mode);
 
 @ffi.Native<ffi.Pointer<ffi.Int> Function()>(symbol: '__errno_location')
 external ffi.Pointer<ffi.Int> errnoLocation();

@@ -97,11 +97,7 @@ void _windowsLink(String source, String target) {
   final newName = target.toNativeUtf16();
   final existing = source.toNativeUtf16();
   try {
-    final ok = win32.CreateHardLinkW(
-      newName.cast<Uint16>(),
-      existing.cast<Uint16>(),
-      nullptr,
-    );
+    final ok = win32.CreateHardLinkW(newName.cast(), existing.cast(), nullptr);
     if (ok == 0) {
       final err = win32.GetLastError();
       throw IoError(
