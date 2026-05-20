@@ -170,28 +170,6 @@ class RegistryClient {
     return headers;
   }
 
-  /// Seed the in-process cache from disk without contacting the network.
-  /// Returns the cached [Packument] when one is present on disk, `null`
-  /// otherwise. Used by warmup to populate the cache before the resolver
-  /// runs so subsequent `packument(name)` calls become in-process hits.
-  Future<Packument?> readDiskCache(String name) async {
-    if (_packumentCache.containsKey(name)) {
-      packumentInProcessHits++;
-      return _packumentCache[name]!.packument;
-    }
-    if (cache == null) return null;
-    final hit = await cache!.readPackument(name);
-    if (hit == null) return null;
-    _packumentCache[name] = CachedPackument(
-      packument: hit.packument,
-      etag: hit.etag,
-      lastModified: hit.lastModified,
-      freshUntil: hit.freshUntil,
-    );
-    packumentDiskHits++;
-    return hit.packument;
-  }
-
   /// Fetch [name]'s packument with ETag revalidation. Returns the cached
   /// value when the registry responds with 304.
   ///

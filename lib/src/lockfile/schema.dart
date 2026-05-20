@@ -98,10 +98,9 @@ class LockedSignature {
 }
 
 class Resolution {
-  const Resolution.tarball({required this.tarball, this.directory});
+  const Resolution.tarball({required this.tarball});
 
   final String? tarball;
-  final String? directory;
 }
 
 class PeerDependencyMeta {
