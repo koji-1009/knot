@@ -4,25 +4,13 @@ import 'package:test/test.dart';
 void main() {
   group('parseVerifyDepsBeforeRun', () {
     test('default is install', () {
-      expect(
-        parseVerifyDepsBeforeRun(null),
-        VerifyDepsBeforeRunPolicy.install,
-      );
-      expect(
-        parseVerifyDepsBeforeRun(''),
-        VerifyDepsBeforeRunPolicy.install,
-      );
+      expect(parseVerifyDepsBeforeRun(null), VerifyDepsBeforeRunPolicy.install);
+      expect(parseVerifyDepsBeforeRun(''), VerifyDepsBeforeRunPolicy.install);
     });
 
     test('round-trips the five explicit values', () {
-      expect(
-        parseVerifyDepsBeforeRun('off'),
-        VerifyDepsBeforeRunPolicy.off,
-      );
-      expect(
-        parseVerifyDepsBeforeRun('warn'),
-        VerifyDepsBeforeRunPolicy.warn,
-      );
+      expect(parseVerifyDepsBeforeRun('off'), VerifyDepsBeforeRunPolicy.off);
+      expect(parseVerifyDepsBeforeRun('warn'), VerifyDepsBeforeRunPolicy.warn);
       expect(
         parseVerifyDepsBeforeRun('error'),
         VerifyDepsBeforeRunPolicy.error,
@@ -38,14 +26,8 @@ void main() {
     });
 
     test('aliases: false→off, true→error', () {
-      expect(
-        parseVerifyDepsBeforeRun('false'),
-        VerifyDepsBeforeRunPolicy.off,
-      );
-      expect(
-        parseVerifyDepsBeforeRun('true'),
-        VerifyDepsBeforeRunPolicy.error,
-      );
+      expect(parseVerifyDepsBeforeRun('false'), VerifyDepsBeforeRunPolicy.off);
+      expect(parseVerifyDepsBeforeRun('true'), VerifyDepsBeforeRunPolicy.error);
     });
 
     test('unknown value throws', () {
@@ -65,17 +47,11 @@ void main() {
 
     test('stale + each policy maps to expected action', () {
       expect(
-        decideVerifyAction(
-          policy: VerifyDepsBeforeRunPolicy.off,
-          stale: true,
-        ),
+        decideVerifyAction(policy: VerifyDepsBeforeRunPolicy.off, stale: true),
         VerifyDepsAction.proceedNoState,
       );
       expect(
-        decideVerifyAction(
-          policy: VerifyDepsBeforeRunPolicy.warn,
-          stale: true,
-        ),
+        decideVerifyAction(policy: VerifyDepsBeforeRunPolicy.warn, stale: true),
         VerifyDepsAction.warn,
       );
       expect(

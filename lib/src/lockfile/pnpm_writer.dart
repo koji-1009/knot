@@ -141,7 +141,9 @@ void _writePackageEntry(StringBuffer buf, PnpmPackageEntry pkg, int indent) {
     }
   }
   if (pkg.hasBin) _writePair(buf, 'hasBin', true, indent);
-  if (pkg.deprecated != null) _writePair(buf, 'deprecated', pkg.deprecated, indent);
+  if (pkg.deprecated != null) {
+    _writePair(buf, 'deprecated', pkg.deprecated, indent);
+  }
   if (pkg.bundledDependencies.isNotEmpty) {
     _writeList(buf, 'bundledDependencies', pkg.bundledDependencies, indent);
   }
@@ -150,11 +152,7 @@ void _writePackageEntry(StringBuffer buf, PnpmPackageEntry pkg, int indent) {
   }
 }
 
-void _writeSnapshotEntry(
-  StringBuffer buf,
-  PnpmSnapshotEntry snap,
-  int indent,
-) {
+void _writeSnapshotEntry(StringBuffer buf, PnpmSnapshotEntry snap, int indent) {
   if (snap.dependencies.isNotEmpty) {
     _writeKey(buf, 'dependencies', indent);
     buf.writeln();
@@ -236,8 +234,8 @@ void _writeKey(StringBuffer buf, String key, int indent) {
 
 String _yamlKey(String key) =>
     RegExp(r'^[A-Za-z_][A-Za-z0-9_\-.]*$').hasMatch(key)
-        ? key
-        : "'${key.replaceAll("'", "''")}'";
+    ? key
+    : "'${key.replaceAll("'", "''")}'";
 
 String _yamlScalar(Object? value) {
   if (value == null) return '~';
@@ -286,5 +284,4 @@ String _yamlScalar(Object? value) {
   return s;
 }
 
-Iterable<String> _sortedKeys(Iterable<String> keys) =>
-    keys.toList()..sort();
+Iterable<String> _sortedKeys(Iterable<String> keys) => keys.toList()..sort();

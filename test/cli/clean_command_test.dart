@@ -9,9 +9,7 @@ void main() {
   group('cleanProject', () {
     test('removes node_modules but keeps lockfile by default', () async {
       await d.dir('proj', [
-        d.dir('node_modules', [
-          d.file('foo.txt', 'x'),
-        ]),
+        d.dir('node_modules', [d.file('foo.txt', 'x')]),
         d.file('package.json', '{"name":"p","version":"1.0.0"}'),
         d.file('package-lock.json', '{}'),
       ]).create();

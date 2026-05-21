@@ -27,10 +27,7 @@ void main() {
         policy: TrustPolicy.off,
         candidate: parseVersion('1.0.0'),
         now: now,
-        previous: TrustRecord(
-          version: parseVersion('2.0.0'),
-          seenAt: now,
-        ),
+        previous: TrustRecord(version: parseVersion('2.0.0'), seenAt: now),
       );
       expect(decision, TrustDecision.accept);
     });

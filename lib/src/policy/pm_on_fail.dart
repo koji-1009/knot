@@ -136,11 +136,11 @@ PmOnFailResult evaluatePmOnFail({
 }
 
 PmOnFailAction _toAction(PmOnFailPolicy policy) => switch (policy) {
-      PmOnFailPolicy.download => PmOnFailAction.downloadDeferred,
-      PmOnFailPolicy.error => PmOnFailAction.fail,
-      PmOnFailPolicy.warn => PmOnFailAction.warn,
-      PmOnFailPolicy.ignore => PmOnFailAction.ignore,
-    };
+  PmOnFailPolicy.download => PmOnFailAction.downloadDeferred,
+  PmOnFailPolicy.error => PmOnFailAction.fail,
+  PmOnFailPolicy.warn => PmOnFailAction.warn,
+  PmOnFailPolicy.ignore => PmOnFailAction.ignore,
+};
 
 class _ManagerPin {
   const _ManagerPin({required this.name, required this.version, this.onFail});

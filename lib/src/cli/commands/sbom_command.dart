@@ -43,11 +43,7 @@ class SbomCommand extends Command<int> {
         'sbom-supplier',
         help: 'Supplier organisation name embedded in metadata.',
       )
-      ..addFlag(
-        'prod',
-        negatable: false,
-        help: 'Include only `dependencies`.',
-      )
+      ..addFlag('prod', negatable: false, help: 'Include only `dependencies`.')
       ..addFlag(
         'dev',
         negatable: false,
@@ -92,8 +88,7 @@ class SbomCommand extends Command<int> {
             lockfile,
             filter: filter,
             bomType: argResults!['sbom-type'] as String? ?? 'library',
-            specVersion:
-                argResults!['sbom-spec-version'] as String? ?? '1.7',
+            specVersion: argResults!['sbom-spec-version'] as String? ?? '1.7',
             authors: _splitCsv(argResults!['sbom-authors'] as String?),
             supplier: argResults!['sbom-supplier'] as String?,
           )
@@ -175,8 +170,9 @@ Map<String, Object?> generateCycloneDx(
         'hashes': [_hashFromIntegrity(entry.integrity!)],
     });
   }
-  components.sort((a, b) =>
-      (a['purl'] as String).compareTo(b['purl'] as String));
+  components.sort(
+    (a, b) => (a['purl'] as String).compareTo(b['purl'] as String),
+  );
 
   return {
     'bomFormat': 'CycloneDX',
@@ -189,7 +185,9 @@ Map<String, Object?> generateCycloneDx(
         {'vendor': 'knot', 'name': 'knot'},
       ],
       if (authors.isNotEmpty)
-        'authors': [for (final a in authors) {'name': a}],
+        'authors': [
+          for (final a in authors) {'name': a},
+        ],
       if (supplier != null) 'supplier': {'name': supplier},
     },
     'components': components,
@@ -226,17 +224,14 @@ Map<String, Object?> generateSpdx(
       ],
     });
   }
-  packages.sort(
-    (a, b) => (a['name'] as String).compareTo(b['name'] as String),
-  );
+  packages.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
 
   return {
     'spdxVersion': specVersion,
     'dataLicense': 'CC0-1.0',
     'SPDXID': 'SPDXRef-DOCUMENT',
     'name': 'knot-sbom',
-    'documentNamespace':
-        'https://knot.invalid/sbom/${_stableSerial(lockfile)}',
+    'documentNamespace': 'https://knot.invalid/sbom/${_stableSerial(lockfile)}',
     'creationInfo': {
       'created': DateTime.now().toUtc().toIso8601String(),
       'creators': [
@@ -275,10 +270,7 @@ Map<String, Object?> _spdxChecksumFromIntegrity(String integrity) {
     return {'algorithm': 'SHA512', 'checksumValue': integrity};
   }
   final algo = integrity.substring(0, dash).toUpperCase();
-  return {
-    'algorithm': algo,
-    'checksumValue': integrity.substring(dash + 1),
-  };
+  return {'algorithm': algo, 'checksumValue': integrity.substring(dash + 1)};
 }
 
 String _stableSerial(Lockfile lockfile) {

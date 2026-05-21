@@ -62,10 +62,10 @@ CatalogMode parseCatalogMode(String? raw) {
 /// One catalog table — `{packageName → range}` keyed by catalog name.
 class CatalogSet {
   CatalogSet(Map<String, Map<String, String>> tables)
-      : tables = Map<String, Map<String, String>>.unmodifiable({
-          for (final entry in tables.entries)
-            entry.key: Map<String, String>.unmodifiable(entry.value),
-        });
+    : tables = Map<String, Map<String, String>>.unmodifiable({
+        for (final entry in tables.entries)
+          entry.key: Map<String, String>.unmodifiable(entry.value),
+      });
 
   final Map<String, Map<String, String>> tables;
 
@@ -78,8 +78,7 @@ class CatalogSet {
   String? lookup({
     String catalogName = defaultCatalogName,
     required String packageName,
-  }) =>
-      tables[catalogName]?[packageName];
+  }) => tables[catalogName]?[packageName];
 
   /// Build a CatalogSet from the shorthand + long form found in a
   /// project file. Both keys are optional; mismatched types are
@@ -88,10 +87,7 @@ class CatalogSet {
   /// `shortForm` is `{packageName → range}` (the default catalog);
   /// `namedForm` is `{catalogName → {packageName → range}}`. Same-name
   /// keys in the long form override the short form.
-  factory CatalogSet.fromConfig({
-    Object? shortForm,
-    Object? namedForm,
-  }) {
+  factory CatalogSet.fromConfig({Object? shortForm, Object? namedForm}) {
     final tables = <String, Map<String, String>>{};
     if (shortForm is Map) {
       tables[defaultCatalogName] = _stringMap(shortForm);
@@ -141,5 +137,4 @@ String? resolveCatalogReference({
   required CatalogReference reference,
   required CatalogSet catalogs,
   required String packageName,
-}) =>
-    catalogs.lookup(catalogName: reference.name, packageName: packageName);
+}) => catalogs.lookup(catalogName: reference.name, packageName: packageName);

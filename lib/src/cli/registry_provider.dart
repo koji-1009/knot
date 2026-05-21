@@ -26,11 +26,12 @@ class RegistryPackageProvider implements PackageProvider {
     Duration? minReleaseAge,
     MinReleaseAgePolicy? releaseAge,
     DateTime? now,
-  })  : releaseAge = releaseAge ??
-            (minReleaseAge != null
-                ? MinReleaseAgePolicy(minimum: minReleaseAge)
-                : const MinReleaseAgePolicy()),
-        _now = now ?? DateTime.now().toUtc();
+  }) : releaseAge =
+           releaseAge ??
+           (minReleaseAge != null
+               ? MinReleaseAgePolicy(minimum: minReleaseAge)
+               : const MinReleaseAgePolicy()),
+       _now = now ?? DateTime.now().toUtc();
 
   final RegistryClient client;
 

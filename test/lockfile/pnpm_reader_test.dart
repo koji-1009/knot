@@ -96,21 +96,14 @@ packages: {}
 ''';
       final lock = parsePnpmLockfile(yaml);
       expect(lock.preservedTopLevel['runtimeOnFail'], 'download');
-      expect(
-        lock.preservedTopLevel['nodeDownloadMirrors'],
-        ['https://example.com/node'],
-      );
-      expect(
-        lock.preservedTopLevel['unknownFutureField'],
-        {'hello': 'world'},
-      );
+      expect(lock.preservedTopLevel['nodeDownloadMirrors'], [
+        'https://example.com/node',
+      ]);
+      expect(lock.preservedTopLevel['unknownFutureField'], {'hello': 'world'});
     });
 
     test('non-map root throws FormatException', () {
-      expect(
-        () => parsePnpmLockfile('- a\n- b\n'),
-        throwsFormatException,
-      );
+      expect(() => parsePnpmLockfile('- a\n- b\n'), throwsFormatException);
     });
   });
 }

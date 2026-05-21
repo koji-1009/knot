@@ -42,10 +42,7 @@ void main() {
 
     test('namedRegistries map is unmodifiable', () {
       final cfg = NpmrcConfig(const {});
-      expect(
-        () => cfg.namedRegistries['gh'] = 'x',
-        throwsUnsupportedError,
-      );
+      expect(() => cfg.namedRegistries['gh'] = 'x', throwsUnsupportedError);
     });
   });
 }

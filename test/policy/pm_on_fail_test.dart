@@ -2,10 +2,7 @@ import 'package:knot/src/cli/package_json.dart';
 import 'package:knot/src/policy/pm_on_fail.dart';
 import 'package:test/test.dart';
 
-PackageJson pkg({
-  String? packageManager,
-  DevEnginesEntry? devEnginesPm,
-}) =>
+PackageJson pkg({String? packageManager, DevEnginesEntry? devEnginesPm}) =>
     PackageJson(
       name: 'app',
       version: '1.0.0',
@@ -89,15 +86,17 @@ void main() {
       expect(r.action, PmOnFailAction.ignore);
     });
 
-    test('knot pin mismatch + policy=download → downloadDeferred (L-basic)',
-        () {
-      final r = evaluatePmOnFail(
-        pkg: pkg(packageManager: 'knot@9.9.9'),
-        knotVersion: '0.0.1-dev',
-        policy: PmOnFailPolicy.download,
-      );
-      expect(r.action, PmOnFailAction.downloadDeferred);
-    });
+    test(
+      'knot pin mismatch + policy=download → downloadDeferred (L-basic)',
+      () {
+        final r = evaluatePmOnFail(
+          pkg: pkg(packageManager: 'knot@9.9.9'),
+          knotVersion: '0.0.1-dev',
+          policy: PmOnFailPolicy.download,
+        );
+        expect(r.action, PmOnFailAction.downloadDeferred);
+      },
+    );
 
     test('devEngines.onFail overrides the global policy', () {
       final r = evaluatePmOnFail(

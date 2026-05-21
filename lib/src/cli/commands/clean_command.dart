@@ -34,10 +34,10 @@ class CleanCommand extends Command<int> {
 
   @override
   Future<int> run() => cleanProject(
-        projectRoot: Directory.current.path,
-        dryRun: argResults!['dry-run'] as bool,
-        deleteLockfile: argResults!['lockfile'] as bool,
-      );
+    projectRoot: Directory.current.path,
+    dryRun: argResults!['dry-run'] as bool,
+    deleteLockfile: argResults!['lockfile'] as bool,
+  );
 }
 
 /// Library-level entry point for the clean logic. Pulled out so tests

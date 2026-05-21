@@ -63,26 +63,17 @@ void main() {
 
     test('trigger + allowBuilds match → allow', () {
       const policy = BuildScriptPolicy(allowBuilds: ['esbuild']);
-      expect(
-        policy.evaluate('esbuild', trigger),
-        BuildScriptDecision.allow,
-      );
+      expect(policy.evaluate('esbuild', trigger), BuildScriptDecision.allow);
     });
 
     test('trigger + no match + non-strict → skip', () {
       const policy = BuildScriptPolicy();
-      expect(
-        policy.evaluate('something', trigger),
-        BuildScriptDecision.skip,
-      );
+      expect(policy.evaluate('something', trigger), BuildScriptDecision.skip);
     });
 
     test('trigger + no match + strict → fail', () {
       const policy = BuildScriptPolicy(strictDepBuilds: true);
-      expect(
-        policy.evaluate('something', trigger),
-        BuildScriptDecision.fail,
-      );
+      expect(policy.evaluate('something', trigger), BuildScriptDecision.fail);
     });
 
     test('dangerouslyAllowAllBuilds bypasses every check', () {
@@ -90,10 +81,7 @@ void main() {
         strictDepBuilds: true,
         dangerouslyAllowAllBuilds: true,
       );
-      expect(
-        policy.evaluate('anything', trigger),
-        BuildScriptDecision.allow,
-      );
+      expect(policy.evaluate('anything', trigger), BuildScriptDecision.allow);
     });
 
     test('@scope/* pattern allows whole scope', () {

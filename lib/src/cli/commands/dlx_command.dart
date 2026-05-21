@@ -143,8 +143,7 @@ String resolveDlxBin({
   // We probe only the first package; multi-package dlx callers are
   // expected to pass `--call` or specify the bin positionally.
   final primary = packages.keys.first;
-  final manifestPath =
-      p.join(dlxDir, 'node_modules', primary, 'package.json');
+  final manifestPath = p.join(dlxDir, 'node_modules', primary, 'package.json');
   final manifest = File(manifestPath);
   if (!manifest.existsSync()) return requested;
   final Object? rawBin;
@@ -210,7 +209,8 @@ class DlxInvocation {
     final packageMap = <String, String>{
       for (final s in specs) s.name: s.version,
     };
-    final binName = callOverride ??
+    final binName =
+        callOverride ??
         (positional.isNotEmpty
             ? positional.first
             : defaultBinFor(specs.first.name));
@@ -273,8 +273,9 @@ String dlxCacheKey(Map<String, String> packages) {
   final entries = packages.entries.map((e) => '${e.key}@${e.value}').toList()
     ..sort();
   final canonical = entries.join('\n');
-  return KnotHash.sha256Hex(Uint8List.fromList(utf8.encode(canonical)))
-      .substring(0, 16);
+  return KnotHash.sha256Hex(
+    Uint8List.fromList(utf8.encode(canonical)),
+  ).substring(0, 16);
 }
 
 String _dlxCacheRoot() {
@@ -301,8 +302,9 @@ Future<Directory> _prepareDlxDir({
     'private': true,
     'dependencies': packages,
   };
-  await File(p.join(dir.path, 'package.json'))
-      .writeAsString(const JsonEncoder.withIndent('  ').convert(manifest));
+  await File(
+    p.join(dir.path, 'package.json'),
+  ).writeAsString(const JsonEncoder.withIndent('  ').convert(manifest));
   return dir;
 }
 

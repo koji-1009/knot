@@ -46,10 +46,7 @@ void main() {
       expect(reparsed.lockfileVersion, original.lockfileVersion);
       expect(reparsed.settings, original.settings);
 
-      expect(
-        reparsed.importers['.']!.dependencies['react']!.version,
-        '18.3.0',
-      );
+      expect(reparsed.importers['.']!.dependencies['react']!.version, '18.3.0');
       expect(reparsed.packages['react@18.3.0']!.engines['node'], '>=14');
       expect(
         reparsed.snapshots['react@18.3.0']!.dependencies['loose-envify'],
@@ -57,10 +54,9 @@ void main() {
       );
       expect(reparsed.catalogs['default']!['react'], '^18.0.0');
       expect(reparsed.preservedTopLevel['runtimeOnFail'], 'download');
-      expect(
-        reparsed.preservedTopLevel['nodeDownloadMirrors'],
-        ['https://example.com/node'],
-      );
+      expect(reparsed.preservedTopLevel['nodeDownloadMirrors'], [
+        'https://example.com/node',
+      ]);
     });
 
     test('quoted package id keys survive roundtrip', () {

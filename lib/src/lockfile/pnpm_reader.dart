@@ -144,8 +144,9 @@ PnpmLockfile parsePnpmLockfile(String yamlString) {
     importers[entry.key] = PnpmImporter(
       dependencies: _readDirectDeps(_asMap(body['dependencies'])),
       devDependencies: _readDirectDeps(_asMap(body['devDependencies'])),
-      optionalDependencies:
-          _readDirectDeps(_asMap(body['optionalDependencies'])),
+      optionalDependencies: _readDirectDeps(
+        _asMap(body['optionalDependencies']),
+      ),
       peerDependencies: _readDirectDeps(_asMap(body['peerDependencies'])),
     );
   }
@@ -176,8 +177,9 @@ PnpmLockfile parsePnpmLockfile(String yamlString) {
     snapshots[entry.key] = PnpmSnapshotEntry(
       dependencies: _stringMap(_asMap(body['dependencies'])),
       optionalDependencies: _stringMap(_asMap(body['optionalDependencies'])),
-      transitivePeerDependencies:
-          _stringList(body['transitivePeerDependencies']),
+      transitivePeerDependencies: _stringList(
+        body['transitivePeerDependencies'],
+      ),
       preserved: _preservedExcept(body, _snapshotKnownKeys),
     );
   }

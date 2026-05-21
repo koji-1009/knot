@@ -188,8 +188,9 @@ class InstallOperation {
     final engineKey = _engineKeyFor(pkg);
     final lockfilePath = p.join(projectRoot, 'package-lock.json');
     final lockfileFile = File(lockfilePath);
-    final Uint8List? lockfileBytes =
-        await lockfileFile.exists() ? await lockfileFile.readAsBytes() : null;
+    final Uint8List? lockfileBytes = await lockfileFile.exists()
+        ? await lockfileFile.readAsBytes()
+        : null;
     final lockfileFingerprint = lockfileBytes == null
         ? ws.lockfileFingerprintAbsent
         : ws.lockfileFingerprintFromBytes(lockfileBytes);

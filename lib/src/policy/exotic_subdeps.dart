@@ -49,9 +49,7 @@ ExoticDepRule classifyExoticDep({
 }) {
   if (!_isExotic(spec)) return ExoticDepRule.notExotic;
   if (isDirect) return ExoticDepRule.directExotic;
-  return _isTrustedExotic(spec)
-      ? ExoticDepRule.trusted
-      : ExoticDepRule.blocked;
+  return _isTrustedExotic(spec) ? ExoticDepRule.trusted : ExoticDepRule.blocked;
 }
 
 bool _isExotic(DependencySpec spec) {

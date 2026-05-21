@@ -3,12 +3,12 @@ import 'package:test/test.dart';
 
 void main() {
   LifecycleScript newScript() => LifecycleScript(
-        event: LifecycleEvent.postinstall,
-        packageName: 'demo',
-        packageVersion: '1.0.0',
-        workingDir: '/tmp/demo',
-        command: 'echo hi',
-      );
+    event: LifecycleEvent.postinstall,
+    packageName: 'demo',
+    packageVersion: '1.0.0',
+    workingDir: '/tmp/demo',
+    command: 'echo hi',
+  );
 
   group('buildLifecycleEnv', () {
     test('strips ambient env not in the passthrough list', () {

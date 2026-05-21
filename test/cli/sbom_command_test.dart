@@ -2,12 +2,10 @@ import 'package:knot/src/cli/commands/sbom_command.dart';
 import 'package:knot/src/lockfile/lockfile.dart';
 import 'package:test/test.dart';
 
-Lockfile _lock(Map<String, LockedPackage> packages, {Map<String, Importer> importers = const {}}) =>
-    Lockfile(
-      lockfileVersion: 1,
-      importers: importers,
-      packages: packages,
-    );
+Lockfile _lock(
+  Map<String, LockedPackage> packages, {
+  Map<String, Importer> importers = const {},
+}) => Lockfile(lockfileVersion: 1, importers: importers, packages: packages);
 
 LockedPackage _pkg(String name, String version, {String? integrity}) =>
     LockedPackage(
@@ -35,18 +33,13 @@ void main() {
       final components = doc['components'] as List;
       expect(components, hasLength(2));
       // alphabetical purl order: lodash before react
-      expect(
-        (components.first as Map)['name'],
-        'lodash',
-      );
+      expect((components.first as Map)['name'], 'lodash');
       final purl = (components.first as Map)['purl'] as String;
       expect(purl, 'pkg:npm/lodash@4.17.21');
     });
 
     test('purl encodes scoped names', () {
-      final lock = _lock({
-        '@types/node': _pkg('@types/node', '22.0.0'),
-      });
+      final lock = _lock({'@types/node': _pkg('@types/node', '22.0.0')});
       final doc = generateCycloneDx(
         lock,
         filter: const SbomFilter(),
@@ -91,20 +84,14 @@ void main() {
       final pkg = packages.first as Map;
       expect(pkg['name'], 'react');
       final refs = pkg['externalRefs'] as List;
-      expect(
-        (refs.first as Map)['referenceLocator'],
-        'pkg:npm/react@18.3.0',
-      );
+      expect((refs.first as Map)['referenceLocator'], 'pkg:npm/react@18.3.0');
     });
   });
 
   group('SbomFilter', () {
     test('prodOnly limits to dependencies only', () {
       final lock = _lock(
-        {
-          'a': _pkg('a', '1.0.0'),
-          'b': _pkg('b', '1.0.0'),
-        },
+        {'a': _pkg('a', '1.0.0'), 'b': _pkg('b', '1.0.0')},
         importers: const {
           '.': Importer(
             dependencies: {'a': '^1'},

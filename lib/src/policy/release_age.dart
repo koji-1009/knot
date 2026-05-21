@@ -49,7 +49,10 @@ class MinReleaseAgePolicy {
   bool _matches(String pattern, String name) {
     if (pattern == name) return true;
     if (pattern.endsWith('/*')) {
-      final prefix = pattern.substring(0, pattern.length - 1); // keeps trailing /
+      final prefix = pattern.substring(
+        0,
+        pattern.length - 1,
+      ); // keeps trailing /
       return name.startsWith(prefix);
     }
     return false;

@@ -77,17 +77,19 @@ void main() {
       );
     });
 
-    test('transitive https://github.com tarball outside whitelist is blocked',
-        () {
-      final spec = DependencySpec.parse(
-        'pkg',
-        'https://github.com/random/repo/archive/refs/tags/v1.tar.gz',
-      );
-      expect(
-        classifyExoticDep(spec: spec, isDirect: false),
-        ExoticDepRule.blocked,
-      );
-    });
+    test(
+      'transitive https://github.com tarball outside whitelist is blocked',
+      () {
+        final spec = DependencySpec.parse(
+          'pkg',
+          'https://github.com/random/repo/archive/refs/tags/v1.tar.gz',
+        );
+        expect(
+          classifyExoticDep(spec: spec, isDirect: false),
+          ExoticDepRule.blocked,
+        );
+      },
+    );
 
     test('case-insensitive owner/repo match', () {
       final spec = DependencySpec.parse('node', 'github:NodeJS/Node');

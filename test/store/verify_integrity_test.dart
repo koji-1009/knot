@@ -27,30 +27,32 @@ void main() {
       );
     });
 
-    test('clean store reports no issues; tampering reports a mismatch',
-        () async {
-      // Hand-build a minimal index entry referencing one file.
-      final hello = const [104, 101, 108, 108, 111]; // "hello"
-      final sha = KnotHash.sha512Hex(Uint8List.fromList(hello));
-      final filePath = store.layout.filePath(sha);
-      await Directory(filePath).parent.create(recursive: true);
-      await File(filePath).writeAsBytes(hello);
-      final tarSha = 'tar${'b' * 125}';
-      final indexPath = store.layout.indexPath(tarSha);
-      await Directory(indexPath).parent.create(recursive: true);
-      await File(indexPath).writeAsString(
-        '{"files":[{"path":"hello.txt","sha512":"$sha","size":5,"mode":420}]}',
-      );
+    test(
+      'clean store reports no issues; tampering reports a mismatch',
+      () async {
+        // Hand-build a minimal index entry referencing one file.
+        final hello = const [104, 101, 108, 108, 111]; // "hello"
+        final sha = KnotHash.sha512Hex(Uint8List.fromList(hello));
+        final filePath = store.layout.filePath(sha);
+        await Directory(filePath).parent.create(recursive: true);
+        await File(filePath).writeAsBytes(hello);
+        final tarSha = 'tar${'b' * 125}';
+        final indexPath = store.layout.indexPath(tarSha);
+        await Directory(indexPath).parent.create(recursive: true);
+        await File(indexPath).writeAsString(
+          '{"files":[{"path":"hello.txt","sha512":"$sha","size":5,"mode":420}]}',
+        );
 
-      expect(await store.verifyTarballIntegrity(tarSha), isEmpty);
+        expect(await store.verifyTarballIntegrity(tarSha), isEmpty);
 
-      // Tamper: overwrite the CAS entry.
-      await File(filePath).writeAsBytes([1, 2, 3]);
-      final issues = await store.verifyTarballIntegrity(tarSha);
-      expect(issues, hasLength(1));
-      expect(issues.first.reason, 'sha512-mismatch');
-      expect(issues.first.expectedSha512, sha);
-    });
+        // Tamper: overwrite the CAS entry.
+        await File(filePath).writeAsBytes([1, 2, 3]);
+        final issues = await store.verifyTarballIntegrity(tarSha);
+        expect(issues, hasLength(1));
+        expect(issues.first.reason, 'sha512-mismatch');
+        expect(issues.first.expectedSha512, sha);
+      },
+    );
 
     test('missing CAS file is reported as `missing`', () async {
       final tarSha = 'mtar${'c' * 124}';

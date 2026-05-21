@@ -85,9 +85,7 @@ void main() {
     });
 
     test('different engine key → different hash', () async {
-      await d.dir('proj', [
-        d.file('package.json', '{}'),
-      ]).create();
+      await d.dir('proj', [d.file('package.json', '{}')]).create();
       final root = p.join(d.sandbox, 'proj');
       final pkg = PackageJson(name: 'p', version: '1.0.0');
       final a = await computeWorkspaceHash(
@@ -107,10 +105,7 @@ void main() {
   group('workspace state file I/O', () {
     test('read returns null when absent', () async {
       await d.dir('proj', []).create();
-      expect(
-        await readWorkspaceState(p.join(d.sandbox, 'proj')),
-        isNull,
-      );
+      expect(await readWorkspaceState(p.join(d.sandbox, 'proj')), isNull);
     });
 
     test('write then read round-trips', () async {
@@ -133,15 +128,10 @@ void main() {
     test('corrupt JSON returns null (treated as no state)', () async {
       await d.dir('proj', [
         d.dir('node_modules', [
-          d.dir('.knot', [
-            d.file('workspace-state.json', 'not-json'),
-          ]),
+          d.dir('.knot', [d.file('workspace-state.json', 'not-json')]),
         ]),
       ]).create();
-      expect(
-        await readWorkspaceState(p.join(d.sandbox, 'proj')),
-        isNull,
-      );
+      expect(await readWorkspaceState(p.join(d.sandbox, 'proj')), isNull);
     });
   });
 

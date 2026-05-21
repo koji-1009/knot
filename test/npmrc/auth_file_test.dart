@@ -22,9 +22,9 @@ void main() {
         'registry=https://example.com/\n'
         'npmrc-auth-file=./auth.npmrc\n',
       );
-      await File(p.join(proj.path, 'auth.npmrc')).writeAsString(
-        '//example.com/:_authToken=secret-token\n',
-      );
+      await File(
+        p.join(proj.path, 'auth.npmrc'),
+      ).writeAsString('//example.com/:_authToken=secret-token\n');
 
       final cfg = await NpmrcLoader(
         projectDir: proj.path,
@@ -40,39 +40,39 @@ void main() {
       );
     });
 
-    test('explicit npmrc entry wins over auth-file when keys overlap',
-        () async {
-      final proj = await Directory(p.join(tmp.path, 'proj')).create();
-      await File(p.join(proj.path, '.npmrc')).writeAsString(
-        '//example.com/:_authToken=project-token\n'
-        'npmrc-auth-file=./auth.npmrc\n',
-      );
-      await File(p.join(proj.path, 'auth.npmrc')).writeAsString(
-        '//example.com/:_authToken=auth-file-token\n',
-      );
+    test(
+      'explicit npmrc entry wins over auth-file when keys overlap',
+      () async {
+        final proj = await Directory(p.join(tmp.path, 'proj')).create();
+        await File(p.join(proj.path, '.npmrc')).writeAsString(
+          '//example.com/:_authToken=project-token\n'
+          'npmrc-auth-file=./auth.npmrc\n',
+        );
+        await File(
+          p.join(proj.path, 'auth.npmrc'),
+        ).writeAsString('//example.com/:_authToken=auth-file-token\n');
 
-      final cfg = await NpmrcLoader(
-        projectDir: proj.path,
-        homeDir: p.join(tmp.path, 'no-home'),
-        globalConfig: p.join(tmp.path, 'no-such-global'),
-        env: const {},
-      ).load();
+        final cfg = await NpmrcLoader(
+          projectDir: proj.path,
+          homeDir: p.join(tmp.path, 'no-home'),
+          globalConfig: p.join(tmp.path, 'no-such-global'),
+          env: const {},
+        ).load();
 
-      expect(
-        cfg.authTokenFor(Uri.parse('https://example.com/')),
-        'project-token',
-      );
-    });
+        expect(
+          cfg.authTokenFor(Uri.parse('https://example.com/')),
+          'project-token',
+        );
+      },
+    );
 
     test('absolute path is honored as-is', () async {
       final proj = await Directory(p.join(tmp.path, 'proj')).create();
       final authPath = p.join(tmp.path, 'shared-auth.npmrc');
-      await File(authPath).writeAsString(
-        '//corp.example/:_authToken=abc\n',
-      );
-      await File(p.join(proj.path, '.npmrc')).writeAsString(
-        'npmrc-auth-file=$authPath\n',
-      );
+      await File(authPath).writeAsString('//corp.example/:_authToken=abc\n');
+      await File(
+        p.join(proj.path, '.npmrc'),
+      ).writeAsString('npmrc-auth-file=$authPath\n');
 
       final cfg = await NpmrcLoader(
         projectDir: proj.path,
@@ -81,10 +81,7 @@ void main() {
         env: const {},
       ).load();
 
-      expect(
-        cfg.authTokenFor(Uri.parse('https://corp.example/')),
-        'abc',
-      );
+      expect(cfg.authTokenFor(Uri.parse('https://corp.example/')), 'abc');
     });
 
     test('missing auth file is silently ignored', () async {

@@ -69,14 +69,13 @@ class BuildScriptTriggers {
     Map<String, String> scripts, {
     bool hasBindingGyp = false,
     bool hasHooksDir = false,
-  }) =>
-      BuildScriptTriggers(
-        hasPreinstall: scripts['preinstall']?.isNotEmpty ?? false,
-        hasInstall: scripts['install']?.isNotEmpty ?? false,
-        hasPostinstall: scripts['postinstall']?.isNotEmpty ?? false,
-        hasBindingGyp: hasBindingGyp,
-        hasHooksDir: hasHooksDir,
-      );
+  }) => BuildScriptTriggers(
+    hasPreinstall: scripts['preinstall']?.isNotEmpty ?? false,
+    hasInstall: scripts['install']?.isNotEmpty ?? false,
+    hasPostinstall: scripts['postinstall']?.isNotEmpty ?? false,
+    hasBindingGyp: hasBindingGyp,
+    hasHooksDir: hasHooksDir,
+  );
 }
 
 /// Policy configuration the gate evaluates against. Sourced from
@@ -109,7 +108,9 @@ class BuildScriptPolicy {
     if (matchesAllowPattern(packageName, allowBuilds)) {
       return BuildScriptDecision.allow;
     }
-    return strictDepBuilds ? BuildScriptDecision.fail : BuildScriptDecision.skip;
+    return strictDepBuilds
+        ? BuildScriptDecision.fail
+        : BuildScriptDecision.skip;
   }
 }
 

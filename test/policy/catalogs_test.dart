@@ -35,10 +35,7 @@ void main() {
           'cli': {'commander': '^12.0.0'},
         },
       );
-      expect(
-        set.lookup(catalogName: 'ui', packageName: 'react'),
-        '^18.0.0',
-      );
+      expect(set.lookup(catalogName: 'ui', packageName: 'react'), '^18.0.0');
       expect(
         set.lookup(catalogName: 'cli', packageName: 'commander'),
         '^12.0.0',

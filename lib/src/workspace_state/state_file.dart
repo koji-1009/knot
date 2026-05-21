@@ -38,12 +38,12 @@ class WorkspaceState {
   final String knotVersion;
 
   Map<String, Object?> toJson() => {
-        'schemaVersion': 1,
-        'hash': hash,
-        'engineKey': engineKey,
-        'installedAt': installedAt.toUtc().toIso8601String(),
-        'knotVersion': knotVersion,
-      };
+    'schemaVersion': 1,
+    'hash': hash,
+    'engineKey': engineKey,
+    'installedAt': installedAt.toUtc().toIso8601String(),
+    'knotVersion': knotVersion,
+  };
 
   static WorkspaceState? fromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -82,11 +82,7 @@ class WorkspaceState {
 /// (warm or cold) on macOS, which dwarfs the rest of the warm-install
 /// budget. Callers that need a precise Node major (Phase I's pinned
 /// case) should pass [nodeMajor] explicitly.
-String workspaceEngineKey({
-  String? platform,
-  String? arch,
-  int? nodeMajor,
-}) {
+String workspaceEngineKey({String? platform, String? arch, int? nodeMajor}) {
   final platformPart = platform ?? Platform.operatingSystem;
   final archPart = arch ?? _hostArch();
   final overrideMajor = _envNodeMajor();
