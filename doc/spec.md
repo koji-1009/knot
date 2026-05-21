@@ -313,22 +313,59 @@ Recognized top-level sections: `lockfileVersion`, `settings`, `importers`, `pack
 }
 ```
 
-`hash` is the sha256 of canonical JSON of:
-
-```
-{
-  "dependencies":         <sorted map>,
-  "devDependencies":      <sorted map>,
-  "optionalDependencies": <sorted map>,
-  "peerDependencies":     <sorted map>,
-  "lockfile":             "absent" | "sha256:<hex of lockfile bytes>",
-  "engineKey":            "<engineKey>"
-}
-```
-
 `engineKey`'s `<major>` is the major version pinned by `devEngines.runtime` when present, the value of `KNOT_HOST_NODE_MAJOR` otherwise, and `?` when neither is set. knot does not invoke `node` to detect a host major.
 
 Consumers: [`optimisticRepeatInstall`](#optimisticrepeatinstall) and [`verifyDepsBeforeRun`](#verifydepsbeforerun).
+
+#### 4.3.1 `hash` canonicalization
+
+The `hash` field is computed by the following procedure. A reimplementation that follows it byte-for-byte will produce an identical `hash` value for the same inputs.
+
+1. **Build the input object.** Construct an in-memory object with the following six keys in this exact order. The order is fixed and is **not** alphabetical:
+
+    1. `dependencies` — the project's `package.json#dependencies` (`{}` when absent).
+    2. `devDependencies` — `package.json#devDependencies` (`{}` when absent).
+    3. `optionalDependencies` — `package.json#optionalDependencies` (`{}` when absent).
+    4. `peerDependencies` — `package.json#peerDependencies` (`{}` when absent).
+    5. `lockfile` — the lockfile fingerprint string (see step 2).
+    6. `engineKey` — the engine key string `"<platform>;<arch>;node<major>"`.
+
+2. **Lockfile fingerprint.** The value at `lockfile` is a string formed as follows:
+
+    - When no lockfile path is supplied, or the path does not refer to an existing readable file, the value is the literal string `"absent"`.
+    - Otherwise the lockfile's raw bytes are read **without UTF-8 normalization, without line-ending normalization, and without trimming**, hashed with SHA-256, and the value becomes `"sha256:"` followed by the digest as 64 lowercase hex characters.
+
+3. **Sort each dependency map.** Each of the four dependency maps (`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`) is replaced by a new map whose keys are the original keys sorted in ascending order by **UTF-16 code unit** (the order produced by Dart's `String.compareTo`, equivalent to a `memcmp` over the 16-bit code units). Notable consequences:
+
+    - Uppercase ASCII letters sort **before** lowercase ASCII letters (`'A'` = `0x41` precedes `'a'` = `0x61`).
+    - Scope sigil `@` (`0x40`) sorts before all ASCII letters, so `@scope/foo` precedes `bar`.
+    - Inside a scope, names are compared character-by-character on their UTF-16 units; no locale collation is applied.
+    - Astral-plane characters (any code point ≥ `U+10000`) are compared as their UTF-16 surrogate pair, which preserves code-point order for these characters but means a key starting with such a character sorts after every BMP character.
+
+    The value associated with each key is preserved verbatim (the dependency specifier string).
+
+4. **Encode as canonical JSON.** Serialize the resulting object with a JSON encoder that has these properties — Dart's `dart:convert` `jsonEncode` is the reference implementation:
+
+    - **No insignificant whitespace.** No spaces, no newlines, no indentation. Output between tokens is empty.
+    - **No trailing newline** and **no leading or trailing byte-order mark.**
+    - **Key order in the output equals insertion order** of the object. The top-level object emits keys in the order given in step 1. Each dependency map emits keys in the sorted order from step 3.
+    - **String escaping** follows RFC 8259 with the following concrete rules:
+        - The following characters are emitted as two-character escapes: `\"` for `U+0022`, `\\` for `U+005C`, `\b` for `U+0008`, `\t` for `U+0009`, `\n` for `U+000A`, `\f` for `U+000C`, `\r` for `U+000D`.
+        - Any other code unit in the range `U+0000` … `U+001F` is emitted as a six-character `\u00XX` escape with **lowercase** hex digits.
+        - The forward slash `U+002F` (`/`), `U+003C` (`<`), `U+003E` (`>`), `U+0026` (`&`), `U+0027` (`'`), and `U+007F` (DEL) are **not** escaped; they appear literally.
+        - Code units in `U+0080` … `U+FFFF` that are part of a valid UTF-16 sequence are **not** escaped; they appear as their UTF-8 encoding in the output bytes (see the next bullet). Validly paired surrogates (a high surrogate `U+D800` … `U+DBFF` followed by a low surrogate `U+DC00` … `U+DFFF`) are combined into the astral code point and emitted as its 4-byte UTF-8 sequence.
+        - An **unpaired** surrogate code unit (a high or low surrogate that does not form a valid pair) is emitted as a six-character `\uXXXX` escape with lowercase hex digits.
+    - **Output encoding** is UTF-8. The encoder produces a string of Unicode code points; the byte sequence used for the hash is the UTF-8 encoding of that string with no BOM.
+    - **Numbers and booleans** do not appear in the input object (every value is either a string or a map of strings to strings). A reimplementer only needs to encode JSON strings, objects, and the empty object `{}`.
+
+5. **Hash and format.** Compute the SHA-256 digest of the UTF-8 byte sequence produced in step 4 and format the 32-byte digest as 64 **lowercase** hex characters. The resulting string is the value written to the `hash` field.
+
+A reference example for an empty project (no dependencies of any kind, no lockfile, engine key `"linux;x64;node?"`):
+
+```
+canonical = {"dependencies":{},"devDependencies":{},"optionalDependencies":{},"peerDependencies":{},"lockfile":"absent","engineKey":"linux;x64;node?"}
+hash      = sha256(utf8(canonical))  // lowercase hex
+```
 
 ---
 
