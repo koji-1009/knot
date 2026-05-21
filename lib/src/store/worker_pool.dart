@@ -265,18 +265,14 @@ class _Worker {
   }
 
   Future<void> linkBatch(List<LinkTask> tasks) async {
-    final response = await _send(
-      (sendPort) => _LinkBatchMsg(tasks, sendPort),
-    );
+    final response = await _send((sendPort) => _LinkBatchMsg(tasks, sendPort));
     if (response is _Err) {
       throw StateError('worker link batch failed: ${response.message}');
     }
   }
 
   Future<void> cloneBatch(List<CloneTask> tasks) async {
-    final response = await _send(
-      (sendPort) => _CloneBatchMsg(tasks, sendPort),
-    );
+    final response = await _send((sendPort) => _CloneBatchMsg(tasks, sendPort));
     if (response is _Err) {
       throw StateError('worker clone batch failed: ${response.message}');
     }

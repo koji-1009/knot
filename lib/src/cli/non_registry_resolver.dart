@@ -38,8 +38,8 @@ class NonRegistryResolver {
     required this.projectRoot,
     required this.store,
     http.Client? client,
-  })  : _client = client ?? http.Client(),
-        _ownsClient = client == null;
+  }) : _client = client ?? http.Client(),
+       _ownsClient = client == null;
 
   final String projectRoot;
   final Store store;
