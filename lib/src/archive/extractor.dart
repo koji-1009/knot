@@ -78,15 +78,18 @@ class TarExtractor {
   Future<int> _writeFile(Stream<List<int>> source, File target) async {
     final sink = target.openWrite();
     var written = 0;
-    // Pass each chunk through verbatim — do NOT pool a single
-    // Uint8List buffer and forward `sublistView`s into the sink.
-    // `sink.add` is async; the buffer gets overwritten before the
-    // previous slice has drained and large files corrupt.
-    await for (final chunk in source) {
-      sink.add(chunk);
-      written += chunk.length;
+    try {
+      // Pass each chunk through verbatim — do NOT pool a single
+      // Uint8List buffer and forward `sublistView`s into the sink.
+      // `sink.add` is async; the buffer gets overwritten before the
+      // previous slice has drained and large files corrupt.
+      await for (final chunk in source) {
+        sink.add(chunk);
+        written += chunk.length;
+      }
+    } finally {
+      await sink.close();
     }
-    await sink.close();
     return written;
   }
 }

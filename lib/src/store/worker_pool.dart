@@ -221,6 +221,7 @@ class _Worker {
   _Worker._(this._sendPort, this._isolate);
   final SendPort _sendPort;
   final Isolate _isolate;
+  final List<ReceivePort> _pending = [];
 
   static Future<_Worker> spawn(String storeRoot) async {
     final boot = ReceivePort();
@@ -229,18 +230,34 @@ class _Worker {
       _BootMsg(storeRoot, boot.sendPort),
       debugName: 'knot-worker',
     );
-    final port = await boot.first as SendPort;
+    final firstMsg = await boot.first;
     boot.close();
-    return _Worker._(port, isolate);
+    if (firstMsg is _Err) {
+      isolate.kill(priority: Isolate.immediate);
+      throw StateError(
+        'knot worker isolate failed to start: ${firstMsg.message}',
+      );
+    }
+    return _Worker._(firstMsg as SendPort, isolate);
+  }
+
+  Future<Object?> _send(_WorkerMsg Function(SendPort) build) async {
+    final reply = ReceivePort();
+    _pending.add(reply);
+    try {
+      _sendPort.send(build(reply.sendPort));
+      return await reply.first;
+    } finally {
+      _pending.remove(reply);
+      reply.close();
+    }
   }
 
   Future<StoredTarball> ingest(Uint8List bytes, String sha) async {
-    final reply = ReceivePort();
-    _sendPort.send(
-      _IngestMsg(TransferableTypedData.fromList([bytes]), sha, reply.sendPort),
+    final response = await _send(
+      (sendPort) =>
+          _IngestMsg(TransferableTypedData.fromList([bytes]), sha, sendPort),
     );
-    final response = await reply.first;
-    reply.close();
     if (response is _Err) {
       throw StateError('worker ingest failed: ${response.message}');
     }
@@ -248,26 +265,26 @@ class _Worker {
   }
 
   Future<void> linkBatch(List<LinkTask> tasks) async {
-    final reply = ReceivePort();
-    _sendPort.send(_LinkBatchMsg(tasks, reply.sendPort));
-    final response = await reply.first;
-    reply.close();
+    final response = await _send((sendPort) => _LinkBatchMsg(tasks, sendPort));
     if (response is _Err) {
       throw StateError('worker link batch failed: ${response.message}');
     }
   }
 
   Future<void> cloneBatch(List<CloneTask> tasks) async {
-    final reply = ReceivePort();
-    _sendPort.send(_CloneBatchMsg(tasks, reply.sendPort));
-    final response = await reply.first;
-    reply.close();
+    final response = await _send((sendPort) => _CloneBatchMsg(tasks, sendPort));
     if (response is _Err) {
       throw StateError('worker clone batch failed: ${response.message}');
     }
   }
 
-  void close() => _isolate.kill(priority: Isolate.immediate);
+  void close() {
+    for (final p in _pending) {
+      p.close();
+    }
+    _pending.clear();
+    _isolate.kill(priority: Isolate.immediate);
+  }
 }
 
 sealed class _WorkerMsg {}
@@ -303,8 +320,14 @@ class _Err {
 }
 
 Future<void> _workerMain(_BootMsg boot) async {
-  final store = Store(boot.storeRoot);
-  await store.initialize();
+  final Store store;
+  try {
+    store = Store(boot.storeRoot);
+    await store.initialize();
+  } on Object catch (e) {
+    boot.replyTo.send(_Err('$e'));
+    return;
+  }
   final mailbox = ReceivePort();
   boot.replyTo.send(mailbox.sendPort);
   await for (final msg in mailbox) {

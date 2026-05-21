@@ -38,11 +38,17 @@ class NonRegistryResolver {
     required this.projectRoot,
     required this.store,
     http.Client? client,
-  }) : _client = client ?? http.Client();
+  }) : _client = client ?? http.Client(),
+       _ownsClient = client == null;
 
   final String projectRoot;
   final Store store;
   final http.Client _client;
+  final bool _ownsClient;
+
+  void close() {
+    if (_ownsClient) _client.close();
+  }
 
   Future<NonRegistryResolution> resolve(DependencySpec spec) =>
       switch (spec.protocol) {

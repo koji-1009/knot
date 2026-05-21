@@ -452,101 +452,110 @@ class InstallOperation {
           : SignatureVerifier(keyStoreFor: client.keyStoreFor);
 
       final fetchFutures = <Future<void>>[];
-      for (final entry in solution.assignments.entries) {
-        final name = entry.key;
-        final version = entry.value;
-        fetchFutures.add(
-          fetchPool.withResource(() async {
-            final slice = await provider.sliceOf(name, version);
-            if (slice == null ||
-                slice.tarball == null ||
-                slice.integrity == null) {
-              throw NetworkError('no tarball/integrity for $name@$version');
-            }
-            if (!_matchesCurrentPlatform(slice)) {
-              _logger.debug(
-                'skipping $name@$version: platform mismatch '
-                '(os=${slice.os}, cpu=${slice.cpu}, libc=${slice.libc})',
+      try {
+        for (final entry in solution.assignments.entries) {
+          final name = entry.key;
+          final version = entry.value;
+          fetchFutures.add(
+            fetchPool.withResource(() async {
+              final slice = await provider.sliceOf(name, version);
+              if (slice == null ||
+                  slice.tarball == null ||
+                  slice.integrity == null) {
+                throw NetworkError('no tarball/integrity for $name@$version');
+              }
+              if (!_matchesCurrentPlatform(slice)) {
+                _logger.debug(
+                  'skipping $name@$version: platform mismatch '
+                  '(os=${slice.os}, cpu=${slice.cpu}, libc=${slice.libc})',
+                );
+                return;
+              }
+              // Skip transitive deps that the package bundles itself —
+              // they ship inside the tarball, so we must not try to fetch
+              // and link them separately.
+              final bundled = slice.bundledDependencies.toSet();
+              _emit(
+                TarballFetchStarted(package: name, version: version.toString()),
               );
-              return;
-            }
-            // Skip transitive deps that the package bundles itself —
-            // they ship inside the tarball, so we must not try to fetch
-            // and link them separately.
-            final bundled = slice.bundledDependencies.toSet();
-            _emit(
-              TarballFetchStarted(package: name, version: version.toString()),
-            );
-            // Pick up the speculative pre-fetch fired from
-            // `onDecide` when one exists; otherwise fetch now.
-            final id = '$name@$version';
-            final bytes =
-                await (tarballFutures[id] ??
-                    client.tarball(
-                      url: slice.tarball!,
-                      integrity: slice.integrity!,
-                    ));
-            _emit(TarballFetched(package: name, version: version.toString()));
-            if (signatureVerifier != null) {
-              final check = await signatureVerifier.verify(
-                name: name,
-                version: version.toString(),
-                integrity: slice.integrity!,
-                signatures: slice.signatures,
-              );
-              final warn = signatureVerifier.enforce(
-                policy: options.signaturePolicy,
-                name: name,
-                version: version.toString(),
-                result: check,
-              );
-              if (warn != null) solver.warnings.add(warn);
-            }
-            final pool = await getWorkerPool();
-            await pool.ingest(bytes: bytes, tarballSha512Hex: slice.integrity!);
-            _emit(TarballExtracted(package: name, version: version.toString()));
-            linkSpecs.add(
-              LinkSpec(
-                name: name,
-                version: version.toString(),
+              // Pick up the speculative pre-fetch fired from
+              // `onDecide` when one exists; otherwise fetch now.
+              final id = '$name@$version';
+              final bytes =
+                  await (tarballFutures[id] ??
+                      client.tarball(
+                        url: slice.tarball!,
+                        integrity: slice.integrity!,
+                      ));
+              _emit(TarballFetched(package: name, version: version.toString()));
+              if (signatureVerifier != null) {
+                final check = await signatureVerifier.verify(
+                  name: name,
+                  version: version.toString(),
+                  integrity: slice.integrity!,
+                  signatures: slice.signatures,
+                );
+                final warn = signatureVerifier.enforce(
+                  policy: options.signaturePolicy,
+                  name: name,
+                  version: version.toString(),
+                  result: check,
+                );
+                if (warn != null) solver.warnings.add(warn);
+              }
+              final pool = await getWorkerPool();
+              await pool.ingest(
+                bytes: bytes,
                 tarballSha512Hex: slice.integrity!,
-                dependencies: {
-                  for (final d in slice.dependencies.entries)
-                    if (!bundled.contains(d.key) &&
-                        solution.assignments[d.key] != null)
-                      d.key: solution.assignments[d.key]!.toString(),
-                },
-                isDirect: deps.containsKey(name),
-                linkAlias: aliasByPackage[name],
+              );
+              _emit(
+                TarballExtracted(package: name, version: version.toString()),
+              );
+              linkSpecs.add(
+                LinkSpec(
+                  name: name,
+                  version: version.toString(),
+                  tarballSha512Hex: slice.integrity!,
+                  dependencies: {
+                    for (final d in slice.dependencies.entries)
+                      if (!bundled.contains(d.key) &&
+                          solution.assignments[d.key] != null)
+                        d.key: solution.assignments[d.key]!.toString(),
+                  },
+                  isDirect: deps.containsKey(name),
+                  linkAlias: aliasByPackage[name],
+                  bin: slice.bin,
+                  scripts: slice.scripts,
+                  engines: slice.engines,
+                ),
+              );
+              lockPackages['$name@$version'] = LockedPackage(
+                name: name,
+                version: version.toString(),
+                resolution: Resolution.tarball(tarball: slice.tarball),
+                integrity: slice.integrity,
+                dependencies: slice.dependencies,
+                optionalDependencies: slice.optionalDependencies,
+                peerDependencies: slice.peerDependencies,
+                os: slice.os,
+                cpu: slice.cpu,
+                hasBin: slice.hasBin,
+                hasInstallScript: slice.hasInstallScript,
                 bin: slice.bin,
                 scripts: slice.scripts,
                 engines: slice.engines,
-              ),
-            );
-            lockPackages['$name@$version'] = LockedPackage(
-              name: name,
-              version: version.toString(),
-              resolution: Resolution.tarball(tarball: slice.tarball),
-              integrity: slice.integrity,
-              dependencies: slice.dependencies,
-              optionalDependencies: slice.optionalDependencies,
-              peerDependencies: slice.peerDependencies,
-              os: slice.os,
-              cpu: slice.cpu,
-              hasBin: slice.hasBin,
-              hasInstallScript: slice.hasInstallScript,
-              bin: slice.bin,
-              scripts: slice.scripts,
-              engines: slice.engines,
-              signatures: [
-                for (final s in slice.signatures)
-                  LockedSignature(keyid: s.keyid, sig: s.sig),
-              ],
-            );
-          }),
-        );
+                signatures: [
+                  for (final s in slice.signatures)
+                    LockedSignature(keyid: s.keyid, sig: s.sig),
+                ],
+              );
+            }),
+          );
+        }
+        await Future.wait(fetchFutures);
+      } finally {
+        await fetchPool.close();
       }
-      await Future.wait(fetchFutures);
       mark('fetch tarballs + ingest (${solution.assignments.length} pkgs)');
 
       // Resolve and materialize non-registry specifiers (file:/link:/https/git).
@@ -556,13 +565,17 @@ class InstallOperation {
           projectRoot: projectRoot,
           store: store,
         );
-        for (final spec in nonRegistrySpecs) {
-          final resolution = await nonReg.resolve(spec);
-          linkSpecs.add(resolution.linkSpec);
-          if (resolution.directSymlinkTarget != null) {
-            directLinkOverrides[resolution.linkSpec.topLevelName] =
-                resolution.directSymlinkTarget!;
+        try {
+          for (final spec in nonRegistrySpecs) {
+            final resolution = await nonReg.resolve(spec);
+            linkSpecs.add(resolution.linkSpec);
+            if (resolution.directSymlinkTarget != null) {
+              directLinkOverrides[resolution.linkSpec.topLevelName] =
+                  resolution.directSymlinkTarget!;
+            }
           }
+        } finally {
+          nonReg.close();
         }
       }
 
@@ -1050,48 +1063,54 @@ class InstallOperation {
     // Fetch any missing tarballs in parallel; ingest into the store.
     final fetchPool = Pool(Platform.numberOfProcessors * 4);
     final futures = <Future<void>>[];
-    for (final entry in lockfile.packages.values) {
-      futures.add(
-        fetchPool.withResource(() async {
-          // Always verify the lockfile-recorded `(name, version,
-          // integrity, signatures)` tuple, even when the tarball is
-          // already in the store. Without this, a tampered lockfile
-          // entry would slip through on warm installs (the tarball
-          // download — and its sha512 check — would be skipped).
-          if (signatureVerifier != null) {
-            final check = await signatureVerifier.verify(
-              name: entry.name,
-              version: entry.version,
+    try {
+      for (final entry in lockfile.packages.values) {
+        futures.add(
+          fetchPool.withResource(() async {
+            // Always verify the lockfile-recorded `(name, version,
+            // integrity, signatures)` tuple, even when the tarball is
+            // already in the store. Without this, a tampered lockfile
+            // entry would slip through on warm installs (the tarball
+            // download — and its sha512 check — would be skipped).
+            if (signatureVerifier != null) {
+              final check = await signatureVerifier.verify(
+                name: entry.name,
+                version: entry.version,
+                integrity: entry.integrity!,
+                signatures: [
+                  for (final s in entry.signatures)
+                    DistSignature(keyid: s.keyid, sig: s.sig),
+                ],
+              );
+              final warn = signatureVerifier.enforce(
+                policy: options.signaturePolicy,
+                name: entry.name,
+                version: entry.version,
+                result: check,
+              );
+              if (warn != null) lifecycleWarnings.add(warn);
+            }
+            if (await store.hasTarball(entry.integrity!)) return;
+            _emit(
+              TarballFetchStarted(package: entry.name, version: entry.version),
+            );
+            final bytes = await client.tarball(
+              url: entry.resolution.tarball!,
               integrity: entry.integrity!,
-              signatures: [
-                for (final s in entry.signatures)
-                  DistSignature(keyid: s.keyid, sig: s.sig),
-              ],
             );
-            final warn = signatureVerifier.enforce(
-              policy: options.signaturePolicy,
-              name: entry.name,
-              version: entry.version,
-              result: check,
+            _emit(TarballFetched(package: entry.name, version: entry.version));
+            final pool = await getWorkerPool();
+            await pool.ingest(bytes: bytes, tarballSha512Hex: entry.integrity!);
+            _emit(
+              TarballExtracted(package: entry.name, version: entry.version),
             );
-            if (warn != null) lifecycleWarnings.add(warn);
-          }
-          if (await store.hasTarball(entry.integrity!)) return;
-          _emit(
-            TarballFetchStarted(package: entry.name, version: entry.version),
-          );
-          final bytes = await client.tarball(
-            url: entry.resolution.tarball!,
-            integrity: entry.integrity!,
-          );
-          _emit(TarballFetched(package: entry.name, version: entry.version));
-          final pool = await getWorkerPool();
-          await pool.ingest(bytes: bytes, tarballSha512Hex: entry.integrity!);
-          _emit(TarballExtracted(package: entry.name, version: entry.version));
-        }),
-      );
+          }),
+        );
+      }
+      await Future.wait(futures);
+    } finally {
+      await fetchPool.close();
     }
-    await Future.wait(futures);
     mark('fetch+ingest (likely 0 when warm)');
 
     // Build LinkSpecs from locked entries. bin/scripts/engines come from
@@ -1125,16 +1144,19 @@ class InstallOperation {
     final fallbackData = <String, PackageJson?>{};
     if (manifestFallback.isNotEmpty) {
       final readPool = Pool(Platform.numberOfProcessors * 2);
-      await Future.wait([
-        for (final entry in manifestFallback)
-          readPool.withResource(() async {
-            fallbackData[entry.integrity!] = await _readPackageJsonFromStore(
-              store,
-              entry.integrity!,
-            );
-          }),
-      ]);
-      await readPool.close();
+      try {
+        await Future.wait([
+          for (final entry in manifestFallback)
+            readPool.withResource(() async {
+              fallbackData[entry.integrity!] = await _readPackageJsonFromStore(
+                store,
+                entry.integrity!,
+              );
+            }),
+        ]);
+      } finally {
+        await readPool.close();
+      }
     }
     final linkSpecs = <LinkSpec>[
       for (final entry in lockfile.packages.values)
