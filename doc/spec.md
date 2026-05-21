@@ -45,7 +45,7 @@ The `knot` and `npm` modes share their on-disk surface; the distinction exists o
 
 Settings are read from the first source that defines them, highest priority first:
 
-1. CLI flag (per-command, e.g. `--min-release-age=24h`)
+1. CLI flag (per-command, e.g. `--min-release-age=1440`)
 2. Environment variable: `KNOT_CONFIG_<UPPER_SNAKE_KEY>=<value>`
 3. Project `.npmrc` (walked from the project root up to the filesystem root; the first `.npmrc` found wins)
 4. User `.npmrc` (`~/.npmrc`)
@@ -76,15 +76,15 @@ Each setting below documents: **Type**, **Default**, **Source**, and **Behavior*
 
 #### `minimumReleaseAge`
 
-- **Type**: duration (`24h`, `7d`, `90m`, etc.)
-- **Default**: unset (filter disabled)
+- **Type**: non-negative integer (minutes)
+- **Default**: `0` (filter disabled)
 - **Source**: `.npmrc minimum-release-age=` or CLI `--min-release-age=`
 
-When set, a candidate version `v` of a package is filtered out of the resolver's candidate list when the registry's `time[v]` is more recent than `now - minimumReleaseAge`. The filter requires the full packument (not the slim form); knot requests it automatically when the filter is on.
+When the value is greater than `0`, a candidate version `v` of a package is filtered out of the resolver's candidate list when the registry's `time[v]` is more recent than `now - <value> minutes`. The filter requires the full packument (not the slim form); knot requests it automatically when the filter is on. `0` (or empty / unset) disables the filter. Unit suffixes (`24h`, `7d`, etc.) are rejected — pnpm's `minimumReleaseAge` is plain minutes, and accepting suffixes would make the same `pnpm-workspace.yaml` value behave differently under knot.
 
 ```
-# .npmrc
-minimum-release-age=24h
+# .npmrc — wait 1 day before installing a newly published version
+minimum-release-age=1440
 ```
 
 #### `minimumReleaseAgeStrict`
@@ -341,7 +341,7 @@ Common conventions:
 
 | Command | Synopsis | Behavior |
 |---|---|---|
-| `install` | `knot install [--frozen-lockfile] [--ignore-scripts] [--allow-scripts=<none\|allowlist\|all>] [--min-release-age=<dur>] [--enforce-signatures=<none\|weak\|strict>] [--audit-level=<low\|moderate\|high\|critical>] [--offline] [--prefer-offline] [--production] [--engine-strict]` | Resolve, fetch, ingest, link. Writes lockfile + workspace state. |
+| `install` | `knot install [--frozen-lockfile] [--ignore-scripts] [--allow-scripts=<none\|allowlist\|all>] [--min-release-age=<minutes>] [--enforce-signatures=<none\|weak\|strict>] [--audit-level=<low\|moderate\|high\|critical>] [--offline] [--prefer-offline] [--production] [--engine-strict]` | Resolve, fetch, ingest, link. Writes lockfile + workspace state. |
 | `ci` | `knot ci` | Locked install. Equivalent to `install --frozen-lockfile`; aborts when the lockfile and `package.json` diverge. |
 | `add` | `knot add <pkg>[@<spec>]...` | Add dependencies to `package.json` and install. |
 | `remove` | `knot remove <pkg>...` | Remove from `package.json` and install. |

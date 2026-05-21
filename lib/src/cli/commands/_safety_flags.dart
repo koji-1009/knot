@@ -36,29 +36,23 @@ SignaturePolicy parseSignaturePolicy(String? raw) => switch (raw) {
   ),
 };
 
-/// Parse `--minimum-release-age=<duration>` (pnpm-compatible syntax):
-/// `7d`, `48h`, `30m`, `60s`. Returns null for an empty / null input
-/// so the install path runs without a release-age filter.
-///
-/// Allowing only one unit per value keeps the parser unambiguous —
-/// compose with the OS shell if a finer grain is needed.
+/// Parse `--minimum-release-age=<minutes>`. Matches pnpm's grammar
+/// exactly: a non-negative integer interpreted as minutes. `0` and
+/// empty input mean "no filter". Unit suffixes (`7d`, `48h`, etc.) are
+/// rejected — pnpm does not accept them and accepting them would make
+/// the same `pnpm-workspace.yaml` value behave differently under knot.
 Duration? parseMinReleaseAge(String? raw) {
   if (raw == null) return null;
   final trimmed = raw.trim();
   if (trimmed.isEmpty) return null;
-  final match = RegExp(r'^(\d+)\s*([dhms])$').firstMatch(trimmed);
-  if (match == null) {
+  final n = int.tryParse(trimmed);
+  if (n == null || n < 0) {
     throw UsageError(
       'invalid --minimum-release-age=$raw; '
-      'expected e.g. "7d", "48h", "30m", "60s"',
+      'expected a non-negative integer (minutes); see pnpm '
+      'minimumReleaseAge — `1440` = 1 day, `10080` = 1 week',
     );
   }
-  final n = int.parse(match.group(1)!);
-  return switch (match.group(2)!) {
-    'd' => Duration(days: n),
-    'h' => Duration(hours: n),
-    'm' => Duration(minutes: n),
-    's' => Duration(seconds: n),
-    _ => throw StateError('unreachable: regex guarantees one of d/h/m/s'),
-  };
+  if (n == 0) return null;
+  return Duration(minutes: n);
 }
