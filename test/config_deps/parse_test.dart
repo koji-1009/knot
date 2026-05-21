@@ -1,4 +1,5 @@
 import 'package:knot/src/config_deps/config_dependencies.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
@@ -38,9 +39,11 @@ void main() {
 
   group('configDependenciesRoot', () {
     test('lives under node_modules/.knot-config', () {
+      // `p.join` uses the host separator (Windows `\` vs POSIX `/`),
+      // matching what `configDependenciesRoot` builds internally.
       expect(
         configDependenciesRoot('/proj'),
-        endsWith('node_modules/.knot-config'),
+        endsWith(p.join('node_modules', '.knot-config')),
       );
     });
   });

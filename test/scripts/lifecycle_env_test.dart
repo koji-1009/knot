@@ -1,7 +1,15 @@
+import 'dart:io';
+
 import 'package:knot/src/scripts/scripts.dart';
 import 'package:test/test.dart';
 
 void main() {
+  // PATH variable name + separator differ between Windows (`Path`, `;`)
+  // and POSIX (`PATH`, `:`); the lifecycle env builder writes the host
+  // canonical form, so the assertions follow suit.
+  final pathKey = Platform.isWindows ? 'Path' : 'PATH';
+  final pathSep = Platform.isWindows ? ';' : ':';
+
   LifecycleScript newScript() => LifecycleScript(
     event: LifecycleEvent.postinstall,
     packageName: 'demo',
@@ -52,20 +60,20 @@ void main() {
     test('binDir is prepended to PATH', () {
       final env = buildLifecycleEnv(
         script: newScript(),
-        baseEnv: const {'PATH': '/usr/bin'},
+        baseEnv: {pathKey: '/usr/bin'},
         binDir: '/proj/node_modules/.bin',
       );
-      expect(env['PATH'], '/proj/node_modules/.bin:/usr/bin');
+      expect(env[pathKey], '/proj/node_modules/.bin$pathSep/usr/bin');
     });
 
     test('extraEnv merges on top of populated env', () {
       final env = buildLifecycleEnv(
         script: newScript(),
-        baseEnv: const {'PATH': '/usr/bin'},
-        extraEnv: const {'CUSTOM_OVERRIDE': '1', 'PATH': '/override'},
+        baseEnv: {pathKey: '/usr/bin'},
+        extraEnv: {'CUSTOM_OVERRIDE': '1', pathKey: '/override'},
       );
       expect(env['CUSTOM_OVERRIDE'], '1');
-      expect(env['PATH'], '/override');
+      expect(env[pathKey], '/override');
     });
   });
 }
