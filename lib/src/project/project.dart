@@ -4,3 +4,4 @@ library;
 
 export 'config_loader.dart';
 export 'mode.dart';
+export 'pnpm_workspace.dart';

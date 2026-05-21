@@ -1,21 +1,18 @@
 import '../cli/dependency_spec.dart';
 
-/// Whitelist of trusted GitHub repositories whose git/https-tarball
-/// references stay allowed even under `blockExoticSubdeps = true`.
-///
-/// pnpm v11 ships a fixed 9-entry list (verified per plan §5); the
-/// exact membership is read from the pnpm source at Phase D source
-/// spike time. The three names below — Node.js, bun, and deno — are
-/// the ones we are confident in from the project memory. The list is
-/// **closed**: anything outside it triggers the block.
-///
-/// Entries are `owner/repo`, lowercased.
-// TODO(phase-d): reconcile the remaining 6 entries from pnpm source.
-const Set<String> trustedExoticRepos = {
-  'nodejs/node',
-  'oven-sh/bun',
-  'denoland/deno',
-};
+/// Trusted GitHub repositories whose git / https-tarball references stay
+/// allowed under `blockExoticSubdeps = true`. Entries are `owner/repo`,
+/// lowercased. Mirrors the GitHub-repo subset of pnpm's
+/// `NON_EXOTIC_RESOLVED_VIA` set.
+const Set<String> trustedExoticRepos = {'denoland/deno', 'oven-sh/bun'};
+
+/// Trusted hosts whose https-tarball URLs are allowed under
+/// `blockExoticSubdeps = true`. Mirrors the host-keyed subset of pnpm's
+/// `NON_EXOTIC_RESOLVED_VIA` set (the source-type tags like
+/// `npm-registry`, `workspace`, `local-filesystem`, `named-registry`,
+/// `jsr-registry`, `custom-resolver` are handled by knot's protocol
+/// dispatch in [classifyExoticDep] and do not need to appear here).
+const Set<String> trustedExoticHosts = {'nodejs.org'};
 
 /// Outcome of an exotic-dep check.
 enum ExoticDepRule {
@@ -68,8 +65,32 @@ bool _isExotic(DependencySpec spec) {
 
 bool _isTrustedExotic(DependencySpec spec) {
   final repo = _extractGithubRepo(spec);
-  if (repo == null) return false;
-  return trustedExoticRepos.contains(repo.toLowerCase());
+  if (repo != null && trustedExoticRepos.contains(repo.toLowerCase())) {
+    return true;
+  }
+  final host = _extractHost(spec);
+  if (host != null && trustedExoticHosts.contains(host.toLowerCase())) {
+    return true;
+  }
+  return false;
+}
+
+/// Extract the host (e.g. `nodejs.org`) of an https-tarball spec, or
+/// null when the source is not an https URL we can parse.
+String? _extractHost(DependencySpec spec) {
+  final candidate = spec.url ?? spec.range;
+  if (candidate.isEmpty) return null;
+  var url = candidate;
+  if (url.startsWith('git+')) url = url.substring(4);
+  if (url.startsWith('github:')) return null;
+  final hash = url.indexOf('#');
+  if (hash >= 0) url = url.substring(0, hash);
+  try {
+    final parsed = Uri.parse(url);
+    return parsed.host.isEmpty ? null : parsed.host;
+  } on FormatException {
+    return null;
+  }
 }
 
 /// Extract the `owner/repo` slug for a github-style spec, or null if

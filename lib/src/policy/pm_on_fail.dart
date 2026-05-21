@@ -2,28 +2,20 @@ import '../cli/package_json.dart';
 import '../semver/semver.dart';
 
 /// How knot reacts when the running binary's version does not satisfy
-/// the project's pinned package-manager requirement (pnpm v11 `pmOnFail`).
-///
-/// [download] (default in pnpm) covers self-update via the binary
-/// cache. It needs the Phase Q-impl infrastructure and is therefore
-/// only honored by Phase L-full; the L-basic implementation here
-/// reports it as [PmOnFailAction.downloadDeferred] so the caller
-/// downgrades gracefully (warn + continue) until L-full lands.
-enum PmOnFailPolicy { download, error, warn, ignore }
+/// the project's pinned package-manager requirement.
+enum PmOnFailPolicy { error, warn, ignore }
 
 /// Parse a textual policy value (from `.npmrc`, `package.json#knot`,
-/// or `pnpm-workspace.yaml`). Falls back to [PmOnFailPolicy.download]
-/// when the value is null or empty, mirroring pnpm's default.
+/// or `pnpm-workspace.yaml`). Falls back to [PmOnFailPolicy.warn]
+/// when the value is null or empty.
 PmOnFailPolicy parsePmOnFail(String? raw) {
-  if (raw == null) return PmOnFailPolicy.download;
+  if (raw == null) return PmOnFailPolicy.warn;
   switch (raw.trim().toLowerCase()) {
     case '':
-    case 'download':
-      return PmOnFailPolicy.download;
-    case 'error':
-      return PmOnFailPolicy.error;
     case 'warn':
       return PmOnFailPolicy.warn;
+    case 'error':
+      return PmOnFailPolicy.error;
     case 'ignore':
       return PmOnFailPolicy.ignore;
     default:
@@ -45,11 +37,6 @@ enum PmOnFailAction {
 
   /// Pin missed; policy = `ignore`. Caller continues silently.
   ignore,
-
-  /// Pin missed; policy = `download` (the default), but L-full is
-  /// not wired yet. Treat as warn for now — Phase L-full upgrades
-  /// this to "fetch + exec the matching binary via Phase Q-impl".
-  downloadDeferred,
 }
 
 /// Result of evaluating the package-manager pin. [satisfied] is true
@@ -83,7 +70,7 @@ class PmOnFailResult {
 PmOnFailResult evaluatePmOnFail({
   required PackageJson pkg,
   required String knotVersion,
-  PmOnFailPolicy policy = PmOnFailPolicy.download,
+  PmOnFailPolicy policy = PmOnFailPolicy.warn,
 }) {
   final pin = _resolveManagerPin(pkg);
   if (pin == null) {
@@ -136,7 +123,6 @@ PmOnFailResult evaluatePmOnFail({
 }
 
 PmOnFailAction _toAction(PmOnFailPolicy policy) => switch (policy) {
-  PmOnFailPolicy.download => PmOnFailAction.downloadDeferred,
   PmOnFailPolicy.error => PmOnFailAction.fail,
   PmOnFailPolicy.warn => PmOnFailAction.warn,
   PmOnFailPolicy.ignore => PmOnFailAction.ignore,

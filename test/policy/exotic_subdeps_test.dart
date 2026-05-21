@@ -50,8 +50,11 @@ void main() {
       );
     });
 
-    test('transitive github:nodejs/node is trusted', () {
-      final spec = DependencySpec.parse('node', 'github:nodejs/node#main');
+    test('transitive https://nodejs.org tarball is trusted', () {
+      final spec = DependencySpec.parse(
+        'node',
+        'https://nodejs.org/dist/v22.0.0/node.tar.gz',
+      );
       expect(
         classifyExoticDep(spec: spec, isDirect: false),
         ExoticDepRule.trusted,
@@ -92,7 +95,7 @@ void main() {
     );
 
     test('case-insensitive owner/repo match', () {
-      final spec = DependencySpec.parse('node', 'github:NodeJS/Node');
+      final spec = DependencySpec.parse('bun', 'github:Oven-SH/Bun');
       expect(
         classifyExoticDep(spec: spec, isDirect: false),
         ExoticDepRule.trusted,

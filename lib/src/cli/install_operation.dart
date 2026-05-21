@@ -9,8 +9,10 @@ import 'package:knot/src/ffi/ffi.dart';
 import 'package:knot/src/linker/linker.dart';
 import 'package:knot/src/lockfile/lockfile.dart';
 import 'package:knot/src/npmrc/npmrc.dart';
+import 'package:knot/src/config_deps/config_dependencies.dart' as config_deps;
 import 'package:knot/src/policy/build_script_gate.dart';
 import 'package:knot/src/policy/pm_on_fail.dart';
+import 'package:knot/src/project/project.dart' as project;
 import 'package:knot/src/workspace_state/workspace_state.dart' as ws;
 import 'package:knot/src/registry/registry.dart';
 import 'package:knot/src/resolver/resolver.dart';
@@ -63,7 +65,7 @@ class InstallOptions {
     this.auditLevel,
     this.storeRoot,
     this.cacheRoot,
-    this.pmOnFail = PmOnFailPolicy.download,
+    this.pmOnFail = PmOnFailPolicy.warn,
     this.strictDepBuilds = false,
     this.dangerouslyAllowAllBuilds = false,
     this.optimisticRepeatInstall = true,
@@ -111,10 +113,8 @@ class InstallOptions {
   final String? storeRoot;
   final String? cacheRoot;
 
-  /// pnpm v11 `pmOnFail` setting. Controls what happens when the
-  /// project pins a knot version we cannot satisfy. `download` is the
-  /// Phase L-full default — until Phase Q-impl ships the binary cache
-  /// it downgrades to a warning. See [PmOnFailPolicy].
+  /// Controls what happens when the project pins a knot version this
+  /// binary does not satisfy. See [PmOnFailPolicy].
   final PmOnFailPolicy pmOnFail;
 
   /// Phase E: when true, install fails for any unreviewed dependency
@@ -285,6 +285,7 @@ class InstallOperation {
             stopwatch: stopwatch,
             nodeVersionFuture: nodeVersionFuture,
           );
+          await _materializeConfigDeps(client: client, pkg: pkg);
           await _writeWorkspaceState(hash: freshHash, engineKey: engineKey);
           return report;
         } finally {
@@ -691,6 +692,7 @@ class InstallOperation {
         'resolved ${solution.assignments.length} packages '
         'in ${stopwatch.elapsed.inMilliseconds}ms',
       );
+      await _materializeConfigDeps(client: client, pkg: pkg);
       await _writeWorkspaceState(hash: freshHash, engineKey: engineKey);
       return InstallReport(warnings: solver.warnings);
     } finally {
@@ -787,9 +789,11 @@ class InstallOperation {
     // explicitly reviewed. `ScriptPolicy.all` opts out of the gate
     // (legacy npm behavior); the empty [_runLifecycleScripts] entry
     // path catches `none` upstream.
+    final pnpmWs = await project.readPnpmWorkspaceConfig(projectRoot);
     final reviewed = [
       ...rootPackage.onlyBuiltDependencies,
       ...rootPackage.allowBuilds,
+      ...pnpmWs.allowBuilds,
     ];
     final gate = BuildScriptPolicy(
       allowBuilds: reviewed,
@@ -1234,6 +1238,27 @@ class InstallOperation {
     return ws.workspaceEngineKey(nodeMajor: major);
   }
 
+  Future<void> _materializeConfigDeps({
+    required RegistryClient client,
+    required PackageJson pkg,
+  }) async {
+    final pnpmWs = await project.readPnpmWorkspaceConfig(projectRoot);
+    final merged = <String, String>{
+      ...pkg.configDependencies,
+      ...pnpmWs.configDependencies,
+    };
+    if (merged.isEmpty) return;
+    final deps = [
+      for (final entry in merged.entries)
+        config_deps.ConfigDependency(name: entry.key, version: entry.value),
+    ];
+    await config_deps.materializeConfigDependencies(
+      projectRoot: projectRoot,
+      client: client,
+      dependencies: deps,
+    );
+  }
+
   Future<void> _writeWorkspaceState({
     required String hash,
     required String engineKey,
@@ -1277,12 +1302,6 @@ class InstallOperation {
             '"${result.requiredRange}".',
           );
         }
-      case PmOnFailAction.downloadDeferred:
-        _logger.warn(
-          'knot $knotVersion does not satisfy required range '
-          '"${result.requiredRange}"; pmOnFail=download is wired up by '
-          'Phase L-full (binary cache) — continuing for now.',
-        );
       case PmOnFailAction.fail:
         throw UsageError(
           'knot $knotVersion does not satisfy required range '

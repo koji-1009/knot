@@ -12,20 +12,20 @@ PackageJson pkg({String? packageManager, DevEnginesEntry? devEnginesPm}) =>
 
 void main() {
   group('parsePmOnFail', () {
-    test('default is download', () {
-      expect(parsePmOnFail(null), PmOnFailPolicy.download);
-      expect(parsePmOnFail(''), PmOnFailPolicy.download);
+    test('default is warn', () {
+      expect(parsePmOnFail(null), PmOnFailPolicy.warn);
+      expect(parsePmOnFail(''), PmOnFailPolicy.warn);
     });
 
-    test('all four explicit values round-trip', () {
-      expect(parsePmOnFail('download'), PmOnFailPolicy.download);
+    test('all three explicit values round-trip', () {
       expect(parsePmOnFail('error'), PmOnFailPolicy.error);
       expect(parsePmOnFail('warn'), PmOnFailPolicy.warn);
       expect(parsePmOnFail('ignore'), PmOnFailPolicy.ignore);
     });
 
-    test('unknown value throws', () {
+    test('unknown value throws (including removed download)', () {
       expect(() => parsePmOnFail('panic'), throwsFormatException);
+      expect(() => parsePmOnFail('download'), throwsFormatException);
     });
   });
 
@@ -85,18 +85,6 @@ void main() {
       );
       expect(r.action, PmOnFailAction.ignore);
     });
-
-    test(
-      'knot pin mismatch + policy=download → downloadDeferred (L-basic)',
-      () {
-        final r = evaluatePmOnFail(
-          pkg: pkg(packageManager: 'knot@9.9.9'),
-          knotVersion: '0.0.1-dev',
-          policy: PmOnFailPolicy.download,
-        );
-        expect(r.action, PmOnFailAction.downloadDeferred);
-      },
-    );
 
     test('devEngines.onFail overrides the global policy', () {
       final r = evaluatePmOnFail(

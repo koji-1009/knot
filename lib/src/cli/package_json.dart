@@ -24,6 +24,7 @@ class PackageJson {
     this.devEnginesRuntime,
     this.allowBuilds = const [],
     this.auditIgnoreGhsas = const [],
+    this.configDependencies = const {},
   });
 
   final String name;
@@ -79,6 +80,13 @@ class PackageJson {
   /// to exclude from `knot audit` reports. Layered with any `--ignore-
   /// ghsas` CLI flag and `.npmrc` `ignore-ghsas=` CSV (union).
   final List<String> auditIgnoreGhsas;
+
+  /// `package.json#knot.configDependencies`. Map of `name → version`
+  /// (exact pin) for packages materialized under
+  /// `node_modules/.knot-config/` rather than the standard
+  /// `node_modules/`. pnpm-mode projects supply the same data via
+  /// `pnpm-workspace.yaml#configDependencies`.
+  final Map<String, String> configDependencies;
 
   static Future<PackageJson> read(String path) async {
     final file = File(path);
@@ -145,6 +153,7 @@ class PackageJson {
 
     final allowBuilds = <String>[];
     final auditIgnoreGhsas = <String>[];
+    final configDeps = <String, String>{};
     final knotSection = json['knot'];
     if (knotSection is Map) {
       final rawAllowBuilds = knotSection['allowBuilds'];
@@ -156,6 +165,21 @@ class PackageJson {
         final rawIgnore = auditConfig['ignoreGhsas'];
         if (rawIgnore is List) {
           auditIgnoreGhsas.addAll(rawIgnore.map((e) => '$e'));
+        }
+      }
+      final rawConfigDeps = knotSection['configDependencies'];
+      if (rawConfigDeps is Map) {
+        for (final entry in rawConfigDeps.entries) {
+          if (entry.key is! String) continue;
+          final value = entry.value;
+          if (value is String && value.isNotEmpty) {
+            configDeps[entry.key as String] = value;
+          } else if (value is Map) {
+            final v = value['version'];
+            if (v is String && v.isNotEmpty) {
+              configDeps[entry.key as String] = v;
+            }
+          }
         }
       }
     }
@@ -179,6 +203,7 @@ class PackageJson {
       devEnginesRuntime: devEnginesRuntime,
       allowBuilds: allowBuilds,
       auditIgnoreGhsas: auditIgnoreGhsas,
+      configDependencies: configDeps,
     );
   }
 }
