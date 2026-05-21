@@ -361,6 +361,87 @@ Common conventions:
 | `sbom` | `knot sbom [--format=<cyclonedx\|spdx>] [-o <file>]` | Emit CycloneDX 1.7 or SPDX 2.3 JSON. |
 | `dlx` | `knot dlx [-p <pkg>...] [-c <bin>] [--offline] <pkg> [<args...>]` | See [§10 dlx](#10-dlx). |
 
+### 5.1 JSON output (`--json`)
+
+The global `--json` flag switches a command from its human-oriented output to a machine-readable JSON document on stdout. Diagnostics (warnings, fetch errors) continue to be written to stderr in their normal text form.
+
+Only `audit` reads the global `--json` flag today. `view`, `pkg`, and `sbom` emit JSON unconditionally because their entire purpose is to produce machine-readable data; the `--json` flag is a no-op for them, and they are listed here so their on-the-wire shape is part of the spec. Every other command ignores `--json` and prints the same human-oriented output it would without the flag.
+
+#### `audit` (`--json`)
+
+Top-level shape: a single JSON object. Always emitted on stdout, even when there are no findings.
+
+```
+{
+  "findings": [
+    {
+      "package":             "<string>",          // e.g. "lodash"
+      "installed":           "<string>",          // installed version
+      "severity":            "<string>",          // "info" | "low" | "moderate" | "high" | "critical"
+      "title":               "<string>",
+      "vulnerable_versions": "<string>",          // npm range string
+      "patched_versions":    "<string> | null",   // npm range string, or null when no fix is known
+      "url":                 "<string>",          // advisory URL
+      "id":                  "<string>"           // GHSA ID
+    }
+  ],
+  "totals": {
+    "<severity>": <integer>                       // one entry per severity that has at least one finding
+  },
+  "total":  <integer>,                            // sum of `totals`
+  "errors": [ "<string>", ... ]                   // per-registry advisory fetch errors
+}
+```
+
+`findings` is not deduplicated: the same `(package, id)` pair may appear once per installed version, ordered as encountered by the auditor. Only `totals` keys that have a non-zero count are present; an empty audit emits `"totals": {}`. The `--fix` plan is not represented in JSON; `knot audit --fix --json` still prints the plan in text form on stdout below the JSON object.
+
+#### `view`
+
+Top-level shape depends on the invocation:
+
+- `knot view <pkg>` (no field): a JSON object.
+
+  ```
+  {
+    "name":      "<string>",
+    "dist-tags": { "<tag>": "<version>", ... },   // e.g. { "latest": "1.2.3" }
+    "versions":  [ "<version>", ... ]             // every published version, registry order
+  }
+  ```
+
+- `knot view <pkg> <field>` (one field): a bare JSON value whose type depends on `<field>`:
+  - `name` → string
+  - `versions` → array of strings
+  - `dist-tags` → object of `<tag>` → `<version>`
+  - `latest` → string (or `null` if the packument has no `latest` dist-tag)
+  - any other field → `null`
+
+The pretty-printed form (two-space indent) is what is written to stdout.
+
+#### `pkg`
+
+`knot pkg get <field>...` writes JSON to stdout:
+
+- One `<field>`: the bare JSON value at that path in `package.json`, or `null` when the path does not exist. Compact (no indent).
+- Two or more `<field>`s: a JSON object keyed by the supplied field paths, each value being the resolved value or `null`. Pretty-printed with two-space indent.
+
+`knot pkg set` and `knot pkg delete` mutate `package.json` and produce no stdout output.
+
+#### `sbom`
+
+Top-level shape is fixed by the chosen format. `--sbom-format` is required; the global `--json` flag has no effect.
+
+- `--sbom-format=cyclonedx` emits a CycloneDX 1.7 JSON document. Top-level keys: `bomFormat`, `specVersion`, `serialNumber`, `version`, `metadata`, `components`. `serialNumber` is `urn:knot:sbom:<sha256 hex>` derived from the sorted set of `name@version|integrity` tuples in the lockfile and is therefore stable across re-runs over an unchanged lockfile.
+- `--sbom-format=spdx` emits an SPDX 2.3 JSON document. Top-level keys: `spdxVersion`, `dataLicense`, `SPDXID`, `name`, `documentNamespace`, `creationInfo`, `packages`.
+
+`--sbom-spec-version` overrides the spec version string written into the document but does not change the field layout. The detailed shape of each `components[]` / `packages[]` entry is delegated to the CycloneDX 1.7 and SPDX 2.3 specifications; knot's emitter populates `name`, `version`, `purl` (npm purl), and `hashes` / `checksums` from the lockfile's integrity field when present.
+
+#### Stability
+
+The `--json` schema is **not yet a stable contract for 0.x releases**. Field names may be added, removed, or renamed in a `0.x → 0.x+1` transition without a deprecation period. Tooling that consumes knot's JSON output should pin to a specific knot version. The `1.0` release will freeze the schemas of every `--json`-supporting command listed in this section; later changes will be additive only, or staged through a documented deprecation.
+
+The third-party SBOM document shapes (CycloneDX 1.7, SPDX 2.3) are governed by their respective external specifications, not by knot, and are excluded from the `1.0` freeze.
+
 ---
 
 ## 6. Lifecycle scripts
