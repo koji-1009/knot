@@ -1,6 +1,14 @@
 /// Default npm registry endpoint.
 const String defaultRegistry = 'https://registry.npmjs.org/';
 
+/// Built-in named-registry aliases per pnpm v11.1.0. Currently a single
+/// entry: `gh` → GitHub Packages registry. User-defined aliases (via
+/// `named-registry-<name>=<url>` in `.npmrc` or `namedRegistries:` in
+/// `pnpm-workspace.yaml`) override these defaults.
+const Map<String, String> builtinNamedRegistries = {
+  'gh': 'https://npm.pkg.github.com/',
+};
+
 /// A merged, resolved .npmrc configuration.
 class NpmrcConfig {
   const NpmrcConfig(this._entries);
@@ -14,6 +22,38 @@ class NpmrcConfig {
   String? registryFor(String scope) {
     final key = '${_normalizeScope(scope)}:registry';
     return _entries[key];
+  }
+
+  /// Resolve a named-registry alias to its URL.
+  ///
+  /// Lookup order: explicit user override (`named-registry-<alias>=`),
+  /// then [builtinNamedRegistries]. Returns null when the alias is
+  /// unknown. The trailing slash is preserved from the source value.
+  ///
+  /// Named registries (pnpm v11.1.0) are non-scope aliases (e.g. `gh:`)
+  /// usable in dependency specifiers and `--registry` selectors. This
+  /// API is consumed by Phase N (registry/auth) and pack-app's runtime
+  /// lookups; downstream features layer auth + tarball normalization on
+  /// top of the URL returned here.
+  String? namedRegistry(String alias) {
+    final key = 'named-registry-${alias.toLowerCase()}';
+    final override = _entries[key];
+    if (override != null) return override;
+    return builtinNamedRegistries[alias.toLowerCase()];
+  }
+
+  /// All known named-registry aliases — explicit overrides plus
+  /// built-ins, with overrides winning. Returned map is unmodifiable.
+  Map<String, String> get namedRegistries {
+    final out = <String, String>{...builtinNamedRegistries};
+    for (final entry in _entries.entries) {
+      const prefix = 'named-registry-';
+      if (!entry.key.startsWith(prefix)) continue;
+      final alias = entry.key.substring(prefix.length);
+      if (alias.isEmpty) continue;
+      out[alias] = entry.value;
+    }
+    return Map.unmodifiable(out);
   }
 
   String? authTokenFor(Uri registryUri) {

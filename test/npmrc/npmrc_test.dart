@@ -119,7 +119,28 @@ void main() {
       }
     });
 
-    test('env NPM_CONFIG_* overrides files', () async {
+    test('env KNOT_CONFIG_* overrides files', () async {
+      final tmp = await Directory.systemTemp.createTemp('knot_npmrc_test_');
+      try {
+        final proj = await Directory(p.join(tmp.path, 'proj')).create();
+        await File(
+          p.join(proj.path, '.npmrc'),
+        ).writeAsString('registry=https://file.example.com/\n');
+
+        final loader = NpmrcLoader(
+          projectDir: proj.path,
+          homeDir: p.join(tmp.path, 'no-home'),
+          globalConfig: p.join(tmp.path, 'no-such-global'),
+          env: const {'KNOT_CONFIG_REGISTRY': 'https://env.example.com/'},
+        );
+        final config = await loader.load();
+        expect(config.registry, 'https://env.example.com/');
+      } finally {
+        await tmp.delete(recursive: true);
+      }
+    });
+
+    test('env NPM_CONFIG_* is ignored (Phase G env policy)', () async {
       final tmp = await Directory.systemTemp.createTemp('knot_npmrc_test_');
       try {
         final proj = await Directory(p.join(tmp.path, 'proj')).create();
@@ -134,7 +155,7 @@ void main() {
           env: const {'NPM_CONFIG_REGISTRY': 'https://env.example.com/'},
         );
         final config = await loader.load();
-        expect(config.registry, 'https://env.example.com/');
+        expect(config.registry, 'https://file.example.com/');
       } finally {
         await tmp.delete(recursive: true);
       }

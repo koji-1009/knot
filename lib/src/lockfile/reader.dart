@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:knot/src/core/core.dart';
 
@@ -7,7 +8,16 @@ import 'lockfile.dart';
 
 /// Import an npm `package-lock.json` (v3) and translate it.
 Future<Lockfile> importNpmLockfile(String path) async {
-  final raw = await File(path).readAsString();
+  final bytes = await File(path).readAsBytes();
+  return importNpmLockfileFromBytes(bytes, path: path);
+}
+
+/// Same as [importNpmLockfile] but operates on pre-read bytes — used
+/// by the install path so the lockfile is opened once and shared
+/// between the workspace-state fingerprint (sha256 of bytes) and the
+/// parsed in-memory shape (json decode of bytes).
+Lockfile importNpmLockfileFromBytes(Uint8List bytes, {required String path}) {
+  final raw = utf8.decode(bytes);
   final root = jsonDecode(raw);
   if (root is! Map) {
     throw LockfileError('package-lock.json root is not an object', path: path);

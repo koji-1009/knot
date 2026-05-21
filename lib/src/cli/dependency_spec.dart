@@ -104,6 +104,18 @@ class DependencySpec {
         protocol: SpecifierProtocol.workspace,
       );
     }
+    if (value.startsWith('catalog:')) {
+      // Phase O: `catalog:` and `catalog:<name>` reference an entry in
+      // a project catalog. The range stays the raw body so a later
+      // resolution step (see policy/catalogs.dart) can swap it for the
+      // declared semver range without re-parsing the protocol prefix.
+      return DependencySpec(
+        logicalName: logicalName,
+        packageName: logicalName,
+        range: value.substring(8),
+        protocol: SpecifierProtocol.catalog,
+      );
+    }
     return DependencySpec(
       logicalName: logicalName,
       packageName: logicalName,
@@ -113,4 +125,4 @@ class DependencySpec {
 }
 
 /// Supported specifier protocols.
-enum SpecifierProtocol { semver, workspace, file, link, https, git }
+enum SpecifierProtocol { semver, workspace, file, link, https, git, catalog }

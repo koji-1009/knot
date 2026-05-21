@@ -44,6 +44,83 @@ class ScriptResult {
   final String stdout;
 }
 
+/// Names from the process environment that are passed through to
+/// lifecycle scripts. Mirrors pnpm v11's env policy (Phase G of the
+/// v11 alignment plan): the host environment is stripped by default
+/// and only this allowlist is forwarded.
+///
+/// `NODE_OPTIONS` is included intentionally — many tools depend on
+/// it. `npm_package_json` is deliberately omitted; the populated
+/// `npm_package_*` metadata is set per-script from the manifest, not
+/// reflected from a pre-existing ambient value.
+///
+/// PATH is handled separately (see [ScriptRunner.run]) because we
+/// prepend `binDir` to it.
+const List<String> lifecycleScriptEnvPassthrough = [
+  // POSIX core
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TERM',
+  'PWD',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LC_MESSAGES',
+  'TMPDIR',
+  // Windows core
+  'USERPROFILE',
+  'USERNAME',
+  'COMPUTERNAME',
+  'SYSTEMROOT',
+  'WINDIR',
+  'TEMP',
+  'TMP',
+  // Tool selection
+  'NODE_OPTIONS',
+  'CI',
+];
+
+/// Build the environment for a lifecycle script. Pulls a curated set
+/// of vars from [baseEnv] (the host environment), adds npm-style
+/// metadata for [script], appends [binDir] to PATH, and finally
+/// merges [extraEnv].
+Map<String, String> buildLifecycleEnv({
+  required LifecycleScript script,
+  Map<String, String>? baseEnv,
+  String? binDir,
+  Map<String, String>? extraEnv,
+  String? initCwd,
+}) {
+  final source = baseEnv ?? Platform.environment;
+  final env = <String, String>{};
+  for (final name in lifecycleScriptEnvPassthrough) {
+    final value = source[name];
+    if (value != null) env[name] = value;
+  }
+
+  // PATH gets the bin-dir prepend treatment; preserve the host PATH.
+  final pathKey = Platform.isWindows ? 'Path' : 'PATH';
+  final hostPath = source[pathKey] ?? source['PATH'] ?? source['Path'];
+  if (hostPath != null) env[pathKey] = hostPath;
+  if (binDir != null) {
+    final sep = Platform.isWindows ? ';' : ':';
+    final existing = env[pathKey] ?? '';
+    env[pathKey] = existing.isEmpty ? binDir : '$binDir$sep$existing';
+  }
+
+  // npm-style metadata. `npm_package_json` is intentionally NOT set
+  // (Phase G: prevents config_json leakage; pnpm v11 omits it too).
+  env['npm_lifecycle_event'] = script.event.scriptKey;
+  env['npm_package_name'] = script.packageName;
+  env['npm_package_version'] = script.packageVersion;
+  env['INIT_CWD'] = initCwd ?? Directory.current.path;
+
+  if (extraEnv != null) env.addAll(extraEnv);
+  return env;
+}
+
 /// Executor for npm lifecycle scripts.
 class ScriptRunner {
   ScriptRunner({this.timeout = const Duration(minutes: 10), this.shellPath});
@@ -62,20 +139,11 @@ class ScriptRunner {
     String? binDir,
     Map<String, String>? extraEnv,
   }) async {
-    final env = <String, String>{
-      ...Platform.environment,
-      'npm_lifecycle_event': script.event.scriptKey,
-      'npm_package_name': script.packageName,
-      'npm_package_version': script.packageVersion,
-      'INIT_CWD': Directory.current.path,
-      ...?extraEnv,
-    };
-    if (binDir != null) {
-      final pathKey = Platform.isWindows ? 'Path' : 'PATH';
-      env[pathKey] =
-          '$binDir${Platform.isWindows ? ';' : ':'}'
-          '${env[pathKey] ?? ''}';
-    }
+    final env = buildLifecycleEnv(
+      script: script,
+      binDir: binDir,
+      extraEnv: extraEnv,
+    );
 
     final (exec, args) = _commandSplit(script.command);
     final process = await Process.start(

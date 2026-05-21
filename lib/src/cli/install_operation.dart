@@ -9,6 +9,9 @@ import 'package:knot/src/ffi/ffi.dart';
 import 'package:knot/src/linker/linker.dart';
 import 'package:knot/src/lockfile/lockfile.dart';
 import 'package:knot/src/npmrc/npmrc.dart';
+import 'package:knot/src/policy/build_script_gate.dart';
+import 'package:knot/src/policy/pm_on_fail.dart';
+import 'package:knot/src/workspace_state/workspace_state.dart' as ws;
 import 'package:knot/src/registry/registry.dart';
 import 'package:knot/src/resolver/resolver.dart';
 import 'package:knot/src/scripts/scripts.dart';
@@ -60,6 +63,10 @@ class InstallOptions {
     this.auditLevel,
     this.storeRoot,
     this.cacheRoot,
+    this.pmOnFail = PmOnFailPolicy.download,
+    this.strictDepBuilds = false,
+    this.dangerouslyAllowAllBuilds = false,
+    this.optimisticRepeatInstall = true,
   });
 
   final bool frozenLockfile;
@@ -104,6 +111,29 @@ class InstallOptions {
   final String? storeRoot;
   final String? cacheRoot;
 
+  /// pnpm v11 `pmOnFail` setting. Controls what happens when the
+  /// project pins a knot version we cannot satisfy. `download` is the
+  /// Phase L-full default — until Phase Q-impl ships the binary cache
+  /// it downgrades to a warning. See [PmOnFailPolicy].
+  final PmOnFailPolicy pmOnFail;
+
+  /// Phase E: when true, install fails for any unreviewed dependency
+  /// that carries install-time build triggers (preinstall/install/
+  /// postinstall, `binding.gyp`, `.hooks/`). pnpm v11 default is
+  /// `true`; knot keeps it `false` until callers opt in.
+  final bool strictDepBuilds;
+
+  /// Phase C escape hatch: skips both [strictDepBuilds] and the
+  /// allowBuilds gate. Reviewing a freshly imported lockfile sometimes
+  /// requires this; production projects should not leave it set.
+  final bool dangerouslyAllowAllBuilds;
+
+  /// Phase J: when true, skip the full install pipeline if the
+  /// workspace state hash matches the recorded one. Cheap to compute
+  /// (≪ 1 ms on warm filesystems) and pairs with `verifyDepsBeforeRun`
+  /// so `knot run` and a re-`knot install` agree on staleness.
+  final bool optimisticRepeatInstall;
+
   ScriptPolicy get effectiveScriptPolicy =>
       ignoreScripts ? ScriptPolicy.none : scriptPolicy;
 }
@@ -146,6 +176,42 @@ class InstallOperation {
 
     final pkg = await PackageJson.read(p.join(projectRoot, 'package.json'));
     _checkPackageManager(pkg);
+
+    // Phase J: short-circuit when the workspace-state hash matches the
+    // recorded one. Cheap (~ 1 ms) and lets warm re-installs return
+    // before any expensive resolve / store I/O kicks off.
+    //
+    // We read the lockfile bytes once here and reuse them downstream
+    // for the parsed in-memory shape (see the `existingLock` path
+    // below) — the workspace-state fingerprint (sha256) and the JSON
+    // decode both run off the same buffer.
+    final engineKey = _engineKeyFor(pkg);
+    final lockfilePath = p.join(projectRoot, 'package-lock.json');
+    final lockfileFile = File(lockfilePath);
+    final Uint8List? lockfileBytes =
+        await lockfileFile.exists() ? await lockfileFile.readAsBytes() : null;
+    final lockfileFingerprint = lockfileBytes == null
+        ? ws.lockfileFingerprintAbsent
+        : ws.lockfileFingerprintFromBytes(lockfileBytes);
+    final freshHash = await ws.computeWorkspaceHash(
+      projectRoot: projectRoot,
+      pkg: pkg,
+      lockfileFingerprint: lockfileFingerprint,
+      engineKey: engineKey,
+    );
+    if (options.optimisticRepeatInstall && !options.frozenLockfile) {
+      final existing = await ws.readWorkspaceState(projectRoot);
+      if (existing != null &&
+          existing.hash == freshHash &&
+          existing.engineKey == engineKey) {
+        _logger.info(
+          'workspace state matches recorded hash — '
+          'skipping install (optimisticRepeatInstall=true)',
+        );
+        return InstallReport(warnings: const []);
+      }
+    }
+
     final workspaces = await WorkspaceResolver(
       projectRoot,
     ).resolve(pkg.workspaces);
@@ -191,9 +257,12 @@ class InstallOperation {
         minReleaseAge: options.minReleaseAge,
       );
       final preferred = <String, Version>{};
-      // Read the project's `package-lock.json`. Returns null when the
-      // repo has none yet.
-      final existingLock = await readProjectLockfile(projectRoot);
+      // Parse the project's `package-lock.json` from the bytes we
+      // already read at the top of `run` (for Phase J's fingerprint).
+      // Returns null when the repo has none yet.
+      final existingLock = lockfileBytes == null
+          ? null
+          : importNpmLockfileFromBytes(lockfileBytes, path: lockfilePath);
       mark('read lockfile');
 
       // Fast path: if the lockfile is fully consistent with package.json
@@ -215,6 +284,7 @@ class InstallOperation {
             stopwatch: stopwatch,
             nodeVersionFuture: nodeVersionFuture,
           );
+          await _writeWorkspaceState(hash: freshHash, engineKey: engineKey);
           return report;
         } finally {
           await workerPool?.dispose();
@@ -620,6 +690,7 @@ class InstallOperation {
         'resolved ${solution.assignments.length} packages '
         'in ${stopwatch.elapsed.inMilliseconds}ms',
       );
+      await _writeWorkspaceState(hash: freshHash, engineKey: engineKey);
       return InstallReport(warnings: solver.warnings);
     } finally {
       client.close();
@@ -712,22 +783,43 @@ class InstallOperation {
 
     // Per-package install / postinstall / prepare in topological dep order.
     // Knot's default is pnpm v9+ semantics: deny unless the package is
-    // explicitly in `onlyBuiltDependencies`. `ScriptPolicy.all` opts
-    // out of allowlist enforcement (legacy npm behavior). The empty
-    // [_runLifecycleScripts] entry path catches `none` upstream.
-    final allowlist = rootPackage.onlyBuiltDependencies;
+    // explicitly reviewed. `ScriptPolicy.all` opts out of the gate
+    // (legacy npm behavior); the empty [_runLifecycleScripts] entry
+    // path catches `none` upstream.
+    final reviewed = [
+      ...rootPackage.onlyBuiltDependencies,
+      ...rootPackage.allowBuilds,
+    ];
+    final gate = BuildScriptPolicy(
+      allowBuilds: reviewed,
+      strictDepBuilds: options.strictDepBuilds,
+      dangerouslyAllowAllBuilds: options.dangerouslyAllowAllBuilds,
+    );
     final enforceAllowlist =
         options.effectiveScriptPolicy == ScriptPolicy.allowlist;
     final ordered = _topologicalOrder(linkSpecs);
     for (final spec in ordered) {
       if (spec.scripts.isEmpty) continue;
-      if (enforceAllowlist && !allowlist.contains(spec.name)) {
-        warnings.add(
-          'skipped install scripts for ${spec.id}: not in '
-          'onlyBuiltDependencies '
-          '(use --allow-scripts=all to override)',
-        );
-        continue;
+      if (enforceAllowlist) {
+        final triggers = BuildScriptTriggers.fromScripts(spec.scripts);
+        final decision = gate.evaluate(spec.name, triggers);
+        if (decision == BuildScriptDecision.fail) {
+          throw UsageError(
+            'install refused: ${spec.id} ships install-time build '
+            'scripts but is not in package.json#knot.allowBuilds. '
+            'Add it after review, or set '
+            '`dangerouslyAllowAllBuilds: true` to bypass.',
+          );
+        }
+        if (decision == BuildScriptDecision.skip) {
+          warnings.add(
+            'skipped install scripts for ${spec.id}: not in '
+            'allowBuilds '
+            '(use --allow-scripts=all to override)',
+          );
+          continue;
+        }
+        // noTrigger / allow → fall through
       }
       final workingDir = NodeModulesLinker.linkedPathOf(
         projectRoot,
@@ -1128,18 +1220,74 @@ class InstallOperation {
     return InstallReport(warnings: lifecycleWarnings);
   }
 
+  String _engineKeyFor(PackageJson pkg) {
+    int? major;
+    final runtime = pkg.devEnginesRuntime;
+    if (runtime != null && runtime.name == 'node') {
+      // Best-effort: pull the leading major. `^22`, `>=22 <23`,
+      // `22.11.0` all map to `22`. When the range is exotic we fall
+      // back to the running host (handled by [workspaceEngineKey]).
+      final match = RegExp(r'(\d+)').firstMatch(runtime.version);
+      if (match != null) major = int.tryParse(match.group(1)!);
+    }
+    return ws.workspaceEngineKey(nodeMajor: major);
+  }
+
+  Future<void> _writeWorkspaceState({
+    required String hash,
+    required String engineKey,
+  }) async {
+    try {
+      await ws.writeWorkspaceState(
+        projectRoot: projectRoot,
+        state: ws.WorkspaceState(
+          hash: hash,
+          engineKey: engineKey,
+          installedAt: DateTime.now().toUtc(),
+          knotVersion: knotVersion,
+        ),
+      );
+    } on FileSystemException catch (e) {
+      _logger.warn('could not write workspace state: ${e.message}');
+    }
+  }
+
   void _checkPackageManager(PackageJson pkg) {
-    final pm = pkg.packageManager;
-    if (pm == null || pm.isEmpty) return;
-    // `name@version` or `name@version+sha224:<hash>` per corepack spec.
-    final at = pm.indexOf('@');
-    if (at <= 0) return;
-    final name = pm.substring(0, at);
-    if (name == 'knot') return;
-    _logger.warn(
-      'package.json packageManager is "$pm" but this is knot; '
-      'corepack-managed environments may reject the mismatch.',
+    final result = evaluatePmOnFail(
+      pkg: pkg,
+      knotVersion: knotVersion,
+      policy: options.pmOnFail,
     );
+    switch (result.action) {
+      case PmOnFailAction.proceed:
+        return;
+      case PmOnFailAction.ignore:
+        return;
+      case PmOnFailAction.warn:
+        if (result.foreignManager != null) {
+          _logger.warn(
+            'package.json pins packageManager to "${result.foreignManager}'
+            '@${result.requiredRange}" but this is knot; mismatched '
+            'package managers can produce different lockfiles.',
+          );
+        } else {
+          _logger.warn(
+            'knot $knotVersion does not satisfy required range '
+            '"${result.requiredRange}".',
+          );
+        }
+      case PmOnFailAction.downloadDeferred:
+        _logger.warn(
+          'knot $knotVersion does not satisfy required range '
+          '"${result.requiredRange}"; pmOnFail=download is wired up by '
+          'Phase L-full (binary cache) — continuing for now.',
+        );
+      case PmOnFailAction.fail:
+        throw UsageError(
+          'knot $knotVersion does not satisfy required range '
+          '"${result.requiredRange}" (pmOnFail=error).',
+        );
+    }
   }
 
   /// If [range] looks like a dist-tag (alphabetic, e.g. `latest`, `next`),

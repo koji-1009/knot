@@ -68,7 +68,7 @@ macOS and Linux are supported (`/usr/bin/time -lp` / `-v`); Windows is not.
 
 Sample numbers from one author run on **macOS arm64 (M2)**, fixture
 `vite-react` (16 packages: react + react-dom + vite with its transitive
-deps), measured 2026-05-20.
+deps), measured 2026-05-21.
 
 Pinned versions (everything below is sensitive to the package manager's
 implementation language and release, especially while bun is mid-migration
@@ -84,19 +84,20 @@ from Zig to Rust — these numbers belong to **this** set of versions):
 
 | tool | scenario | time | peak memory |
 |------|----------|------|-------------|
-| knot | cold     | 1730 ms        | 207 MB |
-| knot | warm     | 59.4 ± 1.0 ms  |  10 MB |
-| pnpm | cold     | 1930 ms        | 396 MB |
-| pnpm | warm     | 290.6 ± 1.9 ms | 267 MB |
-| npm  | cold     | 8830 ms        | 380 MB |
-| npm  | warm     | 424.3 ± 19.9 ms | 107 MB |
-| bun  | cold     | 1950 ms        | 131 MB |
-| bun  | warm     | 8.5 ± 0.3 ms   |   7 MB |
+| **knot** | cold     | **1895 ms**        | **173 MB** |
+| **knot** | warm     | **60.1 ± 1.2 ms**  |  **10 MB** |
+| pnpm | cold     | 5345 ms        | 700 MB |
+| pnpm | warm     | 292.1 ± 1.8 ms | 266 MB |
+| npm  | cold     | 10020 ms       | 378 MB |
+| npm  | warm     | 426.0 ± 14.4 ms | 107 MB |
+| bun  | cold     | 1595 ms        | 129 MB |
+| bun  | warm     | **8.4 ± 0.5 ms**   |   **8 MB** |
 
-Cold times are the median of 3 `tools/bench/run.sh` runs (network-bound, day
+Cold times are the median of 10 `tools/bench/run.sh` runs (network-bound, day
 to day variance dwarfs measurement precision). Warm times come from
-`hyperfine --warmup 2 --runs 10` (mean ± σ). Peak memory is `/usr/bin/time
--lp`'s `peak memory footprint`.
+`hyperfine --warmup 2 --runs 10` (mean ± σ) with each tool seeded against
+its own lockfile. Peak memory is `/usr/bin/time -lp`'s `peak memory
+footprint`.
 
 Rerun in your own environment with the current versions for an up-to-date
 picture — bun's Zig→Rust migration in particular is in flux.

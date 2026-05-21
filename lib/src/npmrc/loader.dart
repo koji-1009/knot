@@ -17,24 +17,30 @@ class NpmrcSource {
 /// Strategy for loading and merging .npmrc files.
 ///
 /// Merge precedence (highest wins):
-///   1. environment variables (`NPM_CONFIG_*`)
+///   1. environment variables (`KNOT_CONFIG_*`)
 ///   2. project `.npmrc` (searched from [projectDir] up to filesystem root)
 ///   3. user `~/.npmrc`
 ///   4. global `/etc/npmrc`
+///
+/// Per Phase G of the v11-alignment plan knot only ingests its own
+/// `KNOT_CONFIG_*` env vars — `npm_config_*` and `NPM_CONFIG_*` are
+/// ignored to prevent ambient npm-side config from leaking into knot's
+/// runtime. Lifecycle scripts still receive npm_* metadata vars (see
+/// `ScriptRunner.buildLifecycleEnv`).
 class NpmrcLoader {
   const NpmrcLoader({
     this.projectDir,
     this.homeDir,
     this.globalConfig = '/etc/npmrc',
-    this._env,
+    this.env,
   });
 
   final String? projectDir;
   final String? homeDir;
   final String globalConfig;
-  final Map<String, String>? _env;
+  final Map<String, String>? env;
 
-  Map<String, String> get _environment => _env ?? Platform.environment;
+  Map<String, String> get _environment => env ?? Platform.environment;
 
   /// Returns the merged configuration assembled from all available layers.
   Future<NpmrcConfig> load() async {
@@ -63,11 +69,43 @@ class NpmrcLoader {
     final fromEnv = _envOverrides();
     if (fromEnv.isNotEmpty) layers.add(NpmrcSource(fromEnv));
 
+    // Phase N: `npmrc-auth-file=<path>` opts the user into a separate
+    // file holding only auth entries — convenient for keeping secrets
+    // out of the project-tracked `.npmrc`. The auth file is layered
+    // BENEATH every npmrc layer the user explicitly authored, so any
+    // explicit override still wins. Walk highest-precedence first so a
+    // single hash lookup per layer finds the effective value without
+    // pre-merging every entry.
+    String? authFilePath;
+    for (var i = layers.length - 1; i >= 0; i--) {
+      final v = layers[i].entries['npmrc-auth-file'];
+      if (v != null && v.isNotEmpty) {
+        authFilePath = v;
+        break;
+      }
+    }
+    if (authFilePath != null) {
+      final resolved = _resolveAuthFile(authFilePath, project, home);
+      final authEntries = await _readFile(resolved);
+      if (authEntries != null) {
+        final layerIndex = layers.length > 1 ? 1 : 0;
+        layers.insert(layerIndex, NpmrcSource(authEntries));
+      }
+    }
+
     final merged = <String, String>{};
     for (final layer in layers) {
       merged.addAll(layer.entries);
     }
     return NpmrcConfig(merged);
+  }
+
+  String _resolveAuthFile(String raw, String project, String? home) {
+    if (raw.startsWith('~/') && home != null) {
+      return p.join(home, raw.substring(2));
+    }
+    if (p.isAbsolute(raw)) return raw;
+    return p.normalize(p.join(project, raw));
   }
 
   Future<Map<String, String>?> _readFile(String path) async {
@@ -91,7 +129,7 @@ class NpmrcLoader {
   Map<String, String> _envOverrides() {
     final out = <String, String>{};
     for (final entry in _environment.entries) {
-      const prefix = 'NPM_CONFIG_';
+      const prefix = 'KNOT_CONFIG_';
       if (!entry.key.toUpperCase().startsWith(prefix)) continue;
       final key = entry.key.substring(prefix.length).toLowerCase();
       out[key] = entry.value;
