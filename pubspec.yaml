@@ -21,6 +21,8 @@ dependencies:
   pool: ^1.5.0
   pub_semver: ^2.1.0
   tar: ^2.0.0
+  yaml: ^3.1.0
+  yaml_edit: ^2.2.0
 
 dev_dependencies:
   test: ^1.31.0

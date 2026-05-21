@@ -41,6 +41,30 @@ class StoredTarball {
   final List<StoredFile> files;
 }
 
+/// One row in the [Store.verifyTarballIntegrity] report.
+class StoreIntegrityIssue {
+  const StoreIntegrityIssue({
+    required this.tarballSha512Hex,
+    required this.relativePath,
+    required this.expectedSha512,
+    required this.actualSha512,
+    required this.reason,
+  });
+
+  final String tarballSha512Hex;
+  final String relativePath;
+  final String expectedSha512;
+
+  /// Recomputed sha512 (null when the file went missing).
+  final String? actualSha512;
+
+  /// Short tag: `missing` or `sha512-mismatch`.
+  final String reason;
+
+  @override
+  String toString() => '$tarballSha512Hex/$relativePath: $reason';
+}
+
 /// Filesystem-backed content store.
 class Store {
   Store(this.root) : layout = StoreLayout(root);
@@ -253,6 +277,58 @@ class Store {
       }
       rethrow;
     }
+  }
+
+  /// Re-hash every file referenced by [tarballSha512Hex]'s index and
+  /// report mismatches. Returns an empty list when the tarball's CAS
+  /// contents are byte-identical to what was ingested.
+  ///
+  /// Throws [StateError] when no index exists for [tarballSha512Hex] —
+  /// callers handle the missing-tarball case explicitly so silent "ok"
+  /// returns cannot mask a missing entry.
+  Future<List<StoreIntegrityIssue>> verifyTarballIntegrity(
+    String tarballSha512Hex,
+  ) async {
+    final index = await readIndex(tarballSha512Hex);
+    if (index == null) {
+      throw StateError(
+        'store has no index for $tarballSha512Hex; cannot verify',
+      );
+    }
+    final issues = <StoreIntegrityIssue>[];
+    for (final f in index.files) {
+      final path = layout.filePath(f.sha512Hex);
+      final file = File(path);
+      if (!await file.exists()) {
+        issues.add(
+          StoreIntegrityIssue(
+            tarballSha512Hex: tarballSha512Hex,
+            relativePath: f.relativePath,
+            expectedSha512: f.sha512Hex,
+            actualSha512: null,
+            reason: 'missing',
+          ),
+        );
+        continue;
+      }
+      final hasher = IncrementalHash.forAlgorithm('sha512');
+      await for (final chunk in file.openRead()) {
+        hasher.update(chunk);
+      }
+      final actual = hasher.finishHex();
+      if (actual != f.sha512Hex) {
+        issues.add(
+          StoreIntegrityIssue(
+            tarballSha512Hex: tarballSha512Hex,
+            relativePath: f.relativePath,
+            expectedSha512: f.sha512Hex,
+            actualSha512: actual,
+            reason: 'sha512-mismatch',
+          ),
+        );
+      }
+    }
+    return issues;
   }
 
   Future<StoredTarball> ingestTarball({

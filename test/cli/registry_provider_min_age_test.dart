@@ -5,6 +5,7 @@ import 'package:http/testing.dart' as http_testing;
 import 'package:knot/src/cli/registry_provider.dart';
 import 'package:knot/src/core/core.dart';
 import 'package:knot/src/npmrc/npmrc.dart';
+import 'package:knot/src/policy/release_age.dart';
 import 'package:knot/src/registry/registry.dart';
 import 'package:test/test.dart';
 
@@ -58,7 +59,7 @@ void main() {
       client.close();
     });
 
-    test('fails with a helpful error when every version is blocked', () async {
+    test('strict policy: fails when every version is blocked', () async {
       final mockClient = http_testing.MockClient((req) async {
         return http.Response(
           _packumentJson(
@@ -79,7 +80,10 @@ void main() {
       );
       final provider = RegistryPackageProvider(
         client,
-        minReleaseAge: const Duration(days: 7),
+        releaseAge: const MinReleaseAgePolicy(
+          minimum: Duration(days: 7),
+          strict: true,
+        ),
         now: DateTime.parse('2026-05-18T00:00:00Z'),
       );
       expect(
@@ -92,6 +96,103 @@ void main() {
           ),
         ),
       );
+      client.close();
+    });
+
+    test(
+      'non-strict fallback: returns lowest immature when all blocked',
+      () async {
+        final mockClient = http_testing.MockClient((req) async {
+          return http.Response(
+            _packumentJson(
+              name: 'demo',
+              latest: '1.0.0',
+              versionToTime: {
+                '0.9.0': '2026-05-15T00:00:00Z',
+                '1.0.0': '2026-05-17T00:00:00Z',
+              },
+            ),
+            200,
+          );
+        });
+        final client = RegistryClient(
+          config: const NpmrcConfig({}),
+          client: mockClient,
+        );
+        final provider = RegistryPackageProvider(
+          client,
+          releaseAge: const MinReleaseAgePolicy(
+            minimum: Duration(days: 7),
+            // strict: false (default) — fallback to the oldest immature
+          ),
+          now: DateTime.parse('2026-05-18T00:00:00Z'),
+        );
+        final versions = await provider.versions('demo');
+        expect(versions.map((v) => v.toString()), ['0.9.0']);
+        client.close();
+      },
+    );
+
+    test(
+      'ignoreMissingTime: passes through versions without time entries',
+      () async {
+        final mockClient = http_testing.MockClient((req) async {
+          return http.Response(
+            jsonEncode({
+              'name': 'demo',
+              'dist-tags': {'latest': '1.0.0'},
+              'versions': {
+                '1.0.0': {'name': 'demo', 'version': '1.0.0'},
+              },
+              'time': <String, String>{},
+            }),
+            200,
+          );
+        });
+        final client = RegistryClient(
+          config: const NpmrcConfig({}),
+          client: mockClient,
+        );
+        final provider = RegistryPackageProvider(
+          client,
+          releaseAge: const MinReleaseAgePolicy(
+            minimum: Duration(days: 7),
+            // ignoreMissingTime defaults to true
+          ),
+          now: DateTime.parse('2026-05-18T00:00:00Z'),
+        );
+        final versions = await provider.versions('demo');
+        expect(versions.single.toString(), '1.0.0');
+        client.close();
+      },
+    );
+
+    test('excludePatterns: package-level bypass of the age check', () async {
+      final mockClient = http_testing.MockClient((req) async {
+        return http.Response(
+          _packumentJson(
+            name: 'demo',
+            latest: '1.0.0',
+            versionToTime: {'1.0.0': '2026-05-17T00:00:00Z'},
+          ),
+          200,
+        );
+      });
+      final client = RegistryClient(
+        config: const NpmrcConfig({}),
+        client: mockClient,
+      );
+      final provider = RegistryPackageProvider(
+        client,
+        releaseAge: const MinReleaseAgePolicy(
+          minimum: Duration(days: 7),
+          strict: true,
+          excludePatterns: ['demo'],
+        ),
+        now: DateTime.parse('2026-05-18T00:00:00Z'),
+      );
+      final versions = await provider.versions('demo');
+      expect(versions.single.toString(), '1.0.0');
       client.close();
     });
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:knot/src/core/core.dart';
+import 'package:knot/src/policy/release_age.dart';
 import 'package:knot/src/registry/registry.dart';
 import 'package:knot/src/resolver/resolver.dart';
 import 'package:knot/src/semver/semver.dart';
@@ -20,24 +21,35 @@ import 'package:knot/src/semver/semver.dart';
 ///    warmup-time range-walk misses (stale lockfile entries, unusual
 ///    `nestedOverrides`, etc.).
 class RegistryPackageProvider implements PackageProvider {
-  RegistryPackageProvider(this.client, {this.minReleaseAge, DateTime? now})
-    : _now = now ?? DateTime.now().toUtc();
+  RegistryPackageProvider(
+    this.client, {
+    Duration? minReleaseAge,
+    MinReleaseAgePolicy? releaseAge,
+    DateTime? now,
+  }) : releaseAge =
+           releaseAge ??
+           (minReleaseAge != null
+               ? MinReleaseAgePolicy(minimum: minReleaseAge)
+               : const MinReleaseAgePolicy()),
+       _now = now ?? DateTime.now().toUtc();
+
   final RegistryClient client;
 
-  /// When set, versions whose `time` entry is younger than `now -
-  /// minReleaseAge` are filtered out of [versions]. Defends against
-  /// freshly-published malicious releases that haven't had time to be
-  /// reported and unpublished. The slim packument doesn't carry
-  /// `time`; the underlying [RegistryClient] switches to the full
-  /// packument when this is set.
-  final Duration? minReleaseAge;
+  /// Release-age filter (Phase B): four axes covering the minimum, the
+  /// strict/non-strict fallback, missing-time handling, and exclusion
+  /// patterns. The slim packument does not carry `time`, so the
+  /// underlying [RegistryClient] is asked for the full packument
+  /// whenever the filter is enabled.
+  final MinReleaseAgePolicy releaseAge;
+
+  Duration? get minReleaseAge => releaseAge.minimum;
 
   /// Frozen "now" reference for release-age comparisons. Frozen so the
   /// resolver sees consistent results across many lookups during one
   /// install.
   final DateTime _now;
 
-  bool get _filterByAge => minReleaseAge != null;
+  bool get _filterByAge => releaseAge.enabled;
 
   final Map<String, Future<Packument>> _inflight = {};
   final Map<String, Packument> _packumentCache = {};
@@ -108,38 +120,53 @@ class RegistryPackageProvider implements PackageProvider {
   @override
   Future<List<Version>> versions(String package) async {
     final pack = await _packumentFor(package);
-    final out = <Version>[];
-    final cutoff = _filterByAge ? _now.subtract(minReleaseAge!) : null;
+    final mature = <Version>[];
+    final immature = <Version>[];
+    final excluded = _filterByAge && releaseAge.isExcluded(package);
+    // Hoist the cutoff: loop-invariant for one resolve, so compute it
+    // once instead of allocating a new DateTime inside every iteration.
+    final cutoff = _filterByAge ? _now.subtract(releaseAge.minimum!) : null;
+    final ignoreMissing = releaseAge.ignoreMissingTime;
     var hiddenByAge = 0;
     for (final v in pack.versions.keys) {
       final parsed = tryParseVersion(v);
       if (parsed == null) continue;
-      if (cutoff != null) {
-        final publishedAt = pack.publishTimes[v];
-        if (publishedAt == null) {
-          // Missing publish-time data — treat as "too new to verify"
-          // rather than silently allowing through. The full packument
-          // we requested should have it; absence is a registry
-          // misbehavior worth surfacing as an unusable version.
-          hiddenByAge++;
-          continue;
-        }
-        if (publishedAt.isAfter(cutoff)) {
-          hiddenByAge++;
-          continue;
-        }
+      if (!_filterByAge || excluded) {
+        mature.add(parsed);
+        continue;
       }
-      out.add(parsed);
-    }
-    if (cutoff != null && out.isEmpty && hiddenByAge > 0) {
-      throw NetworkError(
-        '$package: every version is younger than '
-        '${minReleaseAge!.inHours}h (minimum-release-age filter '
-        'hid $hiddenByAge candidates)',
+      final verdict = evaluateReleaseAge(
+        cutoff: cutoff!,
+        publishedAt: pack.publishTimes[v],
+        ignoreMissingTime: ignoreMissing,
       );
+      switch (verdict) {
+        case ReleaseAgeVerdict.mature:
+          mature.add(parsed);
+        case ReleaseAgeVerdict.immature:
+          hiddenByAge++;
+          immature.add(parsed);
+        case ReleaseAgeVerdict.unknownTime:
+          // ignoreMissingTime=false: treat as "too new to verify"
+          hiddenByAge++;
+      }
     }
-    out.sort();
-    return out;
+    if (_filterByAge && mature.isEmpty && hiddenByAge > 0) {
+      if (releaseAge.strict || immature.isEmpty) {
+        throw NetworkError(
+          '$package: every version is younger than '
+          '${minReleaseAge!.inHours}h (minimum-release-age filter '
+          'hid $hiddenByAge candidates)',
+        );
+      }
+      // Non-strict + at least one immature candidate: fall back to the
+      // lowest-versioned immature release so installs don't stall
+      // behind a freshly published package.
+      immature.sort();
+      mature.add(immature.first);
+    }
+    mature.sort();
+    return mature;
   }
 
   @override

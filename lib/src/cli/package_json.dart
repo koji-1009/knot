@@ -20,6 +20,10 @@ class PackageJson {
     this.onlyBuiltDependencies = const [],
     this.engines = const {},
     this.packageManager,
+    this.devEnginesPackageManager,
+    this.devEnginesRuntime,
+    this.allowBuilds = const [],
+    this.auditIgnoreGhsas = const [],
   });
 
   final String name;
@@ -49,6 +53,32 @@ class PackageJson {
 
   /// `packageManager` field (corepack), e.g. `"knot@0.1.0"`.
   final String? packageManager;
+
+  /// `devEngines.packageManager` declaration (pnpm v11 / Node 22+
+  /// schema). Carries a `name`, a semver `version` range, and an
+  /// optional `onFail` override mirroring the global
+  /// `package-manager-on-fail` setting.
+  final DevEnginesEntry? devEnginesPackageManager;
+
+  /// `devEngines.runtime` declaration. knot does not manage Node
+  /// itself but preserves the field so lockfile / config roundtripping
+  /// stays lossless and Phase I can use its `version` to compute the
+  /// install-time engine key.
+  final DevEnginesEntry? devEnginesRuntime;
+
+  /// Reviewed pattern list (Phase C). Sourced from
+  /// `package.json#knot.allowBuilds` (npm/knot mode) — pnpm-mode
+  /// projects keep their list in `pnpm-workspace.yaml#allowBuilds`,
+  /// which Phase A will merge in here once the YAML reader lands.
+  ///
+  /// Patterns are matched by `matchesAllowPattern` (exact name,
+  /// `@scope/*`, or trailing-`*` glob).
+  final List<String> allowBuilds;
+
+  /// `package.json#knot.auditConfig.ignoreGhsas` (Phase F). GHSA IDs
+  /// to exclude from `knot audit` reports. Layered with any `--ignore-
+  /// ghsas` CLI flag and `.npmrc` `ignore-ghsas=` CSV (union).
+  final List<String> auditIgnoreGhsas;
 
   static Future<PackageJson> read(String path) async {
     final file = File(path);
@@ -91,6 +121,45 @@ class PackageJson {
       onlyBuilt.addAll(rawOnly.map((e) => '$e'));
     }
 
+    DevEnginesEntry? parseDevEngines(Object? raw) {
+      if (raw is! Map) return null;
+      final m = Map<String, dynamic>.from(raw);
+      final name = m['name'];
+      final version = m['version'];
+      if (name is! String || version is! String) return null;
+      final onFail = m['onFail'];
+      return DevEnginesEntry(
+        name: name,
+        version: version,
+        onFail: onFail is String ? onFail : null,
+      );
+    }
+
+    final devEngines = json['devEngines'];
+    DevEnginesEntry? devEnginesPm;
+    DevEnginesEntry? devEnginesRuntime;
+    if (devEngines is Map) {
+      devEnginesPm = parseDevEngines(devEngines['packageManager']);
+      devEnginesRuntime = parseDevEngines(devEngines['runtime']);
+    }
+
+    final allowBuilds = <String>[];
+    final auditIgnoreGhsas = <String>[];
+    final knotSection = json['knot'];
+    if (knotSection is Map) {
+      final rawAllowBuilds = knotSection['allowBuilds'];
+      if (rawAllowBuilds is List) {
+        allowBuilds.addAll(rawAllowBuilds.map((e) => '$e'));
+      }
+      final auditConfig = knotSection['auditConfig'];
+      if (auditConfig is Map) {
+        final rawIgnore = auditConfig['ignoreGhsas'];
+        if (rawIgnore is List) {
+          auditIgnoreGhsas.addAll(rawIgnore.map((e) => '$e'));
+        }
+      }
+    }
+
     return PackageJson(
       name: (json['name'] as String?) ?? '',
       version: (json['version'] as String?) ?? '0.0.0',
@@ -106,8 +175,31 @@ class PackageJson {
       onlyBuiltDependencies: onlyBuilt,
       engines: strMap(json['engines']),
       packageManager: json['packageManager'] as String?,
+      devEnginesPackageManager: devEnginesPm,
+      devEnginesRuntime: devEnginesRuntime,
+      allowBuilds: allowBuilds,
+      auditIgnoreGhsas: auditIgnoreGhsas,
     );
   }
+}
+
+/// One slot inside `devEngines` (`runtime` or `packageManager`).
+///
+/// The semantics differ by slot — for `packageManager` knot enforces
+/// the version range against itself; for `runtime` knot does not
+/// manage Node and only preserves the value through lockfile / config
+/// roundtrips. `onFail`, when set, overrides the global
+/// `package-manager-on-fail` / `runtime-on-fail` setting.
+class DevEnginesEntry {
+  const DevEnginesEntry({
+    required this.name,
+    required this.version,
+    this.onFail,
+  });
+
+  final String name;
+  final String version;
+  final String? onFail;
 }
 
 /// Parse the `overrides` field — splitting into `flat` (applies everywhere)

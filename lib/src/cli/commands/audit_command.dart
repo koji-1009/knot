@@ -50,6 +50,13 @@ class AuditCommand extends Command<int> {
             'ranges to exactly the patched version) and remove the '
             'now-stale lockfile entries. Run `knot install` after to '
             'materialize the bumps.',
+      )
+      ..addOption(
+        'ignore-ghsas',
+        help:
+            'Comma-separated GHSA IDs to exclude from the report. '
+            'Layered on top of `auditConfig.ignoreGhsas` and `.npmrc` '
+            'ignore-ghsas; final list is the union.',
       );
   }
 
@@ -82,9 +89,31 @@ class AuditCommand extends Command<int> {
     }
 
     final npmrc = await NpmrcLoader(projectDir: root).load();
+
+    // Phase F: gather GHSA ignore list from CLI flag + .npmrc +
+    // package.json#knot.auditConfig.ignoreGhsas. Union the sources;
+    // case-insensitive comparison since the registry returns mixed
+    // case and users may type either form.
+    final pkgPath = p.join(root, 'package.json');
+    final pkgManifest = await PackageJson.read(pkgPath);
+    final ignoreGhsas = <String>{
+      ..._splitCsv(results['ignore-ghsas'] as String?),
+      ..._splitCsv(npmrc['ignore-ghsas']),
+      ...pkgManifest.auditIgnoreGhsas,
+    }.map((s) => s.toLowerCase()).toSet();
+
     final service = AuditService(config: npmrc, userAgent: 'knot/$knotVersion');
     try {
-      final report = await service.audit(lockfile);
+      var report = await service.audit(lockfile);
+      if (ignoreGhsas.isNotEmpty) {
+        report = AuditReport(
+          findings: [
+            for (final f in report.findings)
+              if (!ignoreGhsas.contains(f.advisory.id.toLowerCase())) f,
+          ],
+          advisoryFetchErrors: report.advisoryFetchErrors,
+        );
+      }
       for (final err in report.advisoryFetchErrors) {
         stderr.writeln('warning: $err');
       }
@@ -222,6 +251,15 @@ class AuditCommand extends Command<int> {
     } finally {
       client.close();
     }
+  }
+
+  List<String> _splitCsv(String? raw) {
+    if (raw == null || raw.isEmpty) return const [];
+    return raw
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
   }
 
   DependencyKind? _kindFor(PackageJson pkg, String name) {

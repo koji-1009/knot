@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:args/command_runner.dart';
 import 'package:knot/src/core/core.dart';
-import 'package:knot/src/npmrc/npmrc.dart';
+import 'package:knot/src/project/project.dart';
 import 'package:knot/src/registry/registry.dart';
 import 'package:path/path.dart' as p;
 
@@ -28,9 +28,19 @@ class DoctorCommand extends Command<int> {
     }
 
     final root = Directory.current.path;
+    final project = await loadProjectConfig(projectRoot: root);
+    stdout.writeln('project mode:');
+    stdout.writeln('  ${project.mode.name}');
+    final npmrc = project.npmrc;
     stdout.writeln('npmrc resolved:');
-    final npmrc = await NpmrcLoader(projectDir: root).load();
     stdout.writeln('  registry: ${npmrc.registry}');
+    final named = npmrc.namedRegistries;
+    if (named.isNotEmpty) {
+      stdout.writeln('  named-registries:');
+      for (final entry in named.entries) {
+        stdout.writeln('    ${entry.key} -> ${entry.value}');
+      }
+    }
 
     stdout.writeln('registry reachability:');
     final client = RegistryClient(config: npmrc);

@@ -38,6 +38,10 @@ class KnotHash {
   static String sha512Hex(Uint8List bytes) =>
       _toHex(bssl.Hash.sha512.digest(bytes));
 
+  /// Compute a SHA-256 digest, returning lowercase hex.
+  static String sha256Hex(Uint8List bytes) =>
+      _toHex(bssl.Hash.sha256.digest(bytes));
+
   /// Hash using one of `sha256`, `sha384`, `sha512`. Returns raw bytes.
   static Uint8List digest(String algorithm, Uint8List bytes) {
     final algo = switch (algorithm) {

@@ -51,7 +51,8 @@ class NonRegistryResolver {
         SpecifierProtocol.https => _resolveHttps(spec),
         SpecifierProtocol.git => _resolveGit(spec),
         SpecifierProtocol.semver ||
-        SpecifierProtocol.workspace => throw StateError(
+        SpecifierProtocol.workspace ||
+        SpecifierProtocol.catalog => throw StateError(
           'NonRegistryResolver received a ${spec.protocol.name} spec',
         ),
       };

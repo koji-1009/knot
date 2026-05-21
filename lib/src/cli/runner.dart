@@ -5,15 +5,19 @@ import 'package:knot/src/core/core.dart';
 import 'commands/add_command.dart';
 import 'commands/audit_command.dart';
 import 'commands/ci_command.dart';
+import 'commands/clean_command.dart';
 import 'commands/config_command.dart';
+import 'commands/dlx_command.dart';
 import 'commands/doctor_command.dart';
 import 'commands/exec_command.dart';
 import 'commands/install_command.dart';
 import 'commands/list_command.dart';
 import 'commands/outdated_command.dart';
+import 'commands/peers_command.dart';
 import 'commands/pkg_command.dart';
 import 'commands/remove_command.dart';
 import 'commands/run_command.dart';
+import 'commands/sbom_command.dart';
 import 'commands/update_command.dart';
 import 'commands/view_command.dart';
 import 'commands/why_command.dart';
@@ -73,6 +77,10 @@ class KnotCommandRunner extends CommandRunner<int> {
     addCommand(PkgCommand());
     addCommand(DoctorCommand());
     addCommand(ConfigCommand());
+    addCommand(CleanCommand());
+    addCommand(PeersCommand());
+    addCommand(SbomCommand());
+    addCommand(DlxCommand());
   }
 
   @override
