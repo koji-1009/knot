@@ -79,9 +79,15 @@ class RegistryPackageProvider implements PackageProvider {
         .packument(name, requirePublishTimes: _filterByAge)
         .then((pack) {
           _packumentCache[name] = pack;
-          _inflight.remove(name);
           if (cascadeDepth > 0) _scheduleSpeculative(pack, cascadeDepth - 1);
           return pack;
+        })
+        .whenComplete(() {
+          // Always evict from `_inflight`, including on error. If we
+          // only cleared on success, a transient failure would make
+          // every subsequent caller for this name return the failed
+          // future forever within the same process.
+          _inflight.remove(name);
         });
     _inflight[name] = future;
     return future;
@@ -108,12 +114,11 @@ class RegistryPackageProvider implements PackageProvider {
       if (_packumentCache.containsKey(name)) continue;
       if (_inflight.containsKey(name)) continue;
       if (!_prefetched.add(name)) continue;
-      unawaited(
-        _packumentFor(
-          name,
-          cascadeDepth: remainingDepth,
-        ).then((_) {}).catchError((_) {}),
-      );
+      Future(() async {
+        try {
+          await _packumentFor(name, cascadeDepth: remainingDepth);
+        } catch (_) {}
+      });
     }
   }
 

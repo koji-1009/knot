@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:knot/src/core/core.dart';
@@ -165,11 +166,15 @@ class ScriptRunner {
         .listen(stderrBuf.write)
         .asFuture<void>();
 
-    final timer = Future.delayed(timeout, () {
+    final timer = Timer(timeout, () {
       process.kill(ProcessSignal.sigkill);
     });
-    final exitCode = await process.exitCode;
-    timer.ignore();
+    final int exitCode;
+    try {
+      exitCode = await process.exitCode;
+    } finally {
+      timer.cancel();
+    }
     await Future.wait([stdoutDone, stderrDone]);
 
     if (exitCode != 0) {
