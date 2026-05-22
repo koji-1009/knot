@@ -372,12 +372,12 @@ knot uses three primary exit codes (`sysexits.h`-derived: `0`, `64`, `70`) plus 
 | `1` | `audit` produced no findings but at least one advisory fetch from the registry failed; the partial result is treated as failure so CI does not pass on incomplete data. |
 | `1` | `peers check` found at least one unsatisfied or mismatched non-optional peer dependency. |
 | `1` | `peers check` could not locate a project lockfile. |
+| `1` | `audit` was invoked without a project lockfile. |
 | `1` | `why` was given a package that is not present in the resolved dependency graph. |
 | `1` | `clean` failed to delete a target path because of a `FileSystemException`. |
 | `1` | `doctor` detected at least one diagnostic failure (`node` is not on `PATH`, or the resolved registry is unreachable). |
 | `64` | The argument parser rejected the invocation: unknown command, unknown flag, missing required value, or an option value outside the declared allowed set. |
 | `64` | A required positional argument is missing or malformed. This covers `add` / `remove` with no package names, `why` / `view` with no package name, `run` with no script name, `exec` with no binary, `list` / `why` invoked without a project lockfile, `pkg get` / `pkg set` / `pkg delete` with no field path, `pkg set` with a value that is not in `path=value` form, `config get` / `config delete` with no key, `config set` with fewer than two arguments, `dlx` with no package, and `dlx` with a malformed scoped package specifier. |
-| `64` | `audit` was invoked without a project lockfile. |
 | `64` | `sbom` was invoked without `--sbom-format`, or without a project lockfile. |
 | `64` | `run` was invoked with a script name that is not present in `package.json#scripts`. |
 | `64` | `exec` was invoked with a binary that is not present in `node_modules/.bin`. |
