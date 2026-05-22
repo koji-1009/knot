@@ -16,18 +16,19 @@ import 'cache.dart';
 import 'integrity.dart';
 import 'packument.dart';
 
-/// Decode a packument response body (utf8 + JSON) on a one-shot isolate.
+/// Decode a packument response body and construct a [Packument] on a
+/// one-shot isolate. The whole parse cost (utf8 + JSON +
+/// `Packument.fromJson`) stays off the main isolate.
 ///
-/// Pulled out of [RegistryClient] so the closure handed to
+/// Routed through a top-level helper so the closure handed to
 /// [Isolate.run] captures only the [TransferableTypedData] wrapper
 /// (sendable) instead of `this` (which would drag in the [Pool] and
-/// [http.Client] and trigger an unsendable-message error). The bytes
-/// move via [TransferableTypedData] for zero-copy transfer.
+/// [http.Client]). The bytes move via [TransferableTypedData] for
+/// zero-copy transfer.
 ///
-/// Used as a fallback when no [WorkerPool] has been injected (warm
-/// installs that hit the disk cache up front never spawn the pool).
-/// The injected path pays no per-call spawn cost.
-Future<Map<String, dynamic>> _decodePackumentBytes(Uint8List bytes) {
+/// Used as a fallback when no [WorkerPool] has been injected. The
+/// injected path pays no per-call spawn cost.
+Future<Packument> _decodePackumentBytes(Uint8List bytes) {
   final transferable = TransferableTypedData.fromList([bytes]);
   return Isolate.run(() {
     final raw = transferable.materialize().asUint8List();
@@ -35,7 +36,7 @@ Future<Map<String, dynamic>> _decodePackumentBytes(Uint8List bytes) {
     if (decoded is! Map) {
       throw const FormatException('packument is not a JSON object');
     }
-    return Map<String, dynamic>.from(decoded);
+    return Packument.fromJson(Map<String, dynamic>.from(decoded));
   });
 }
 
@@ -351,10 +352,9 @@ class RegistryClient {
         // Prefer the shared WorkerPool (no per-call spawn) when
         // injected; fall back to a one-shot isolate otherwise.
         final pool = await _getWorkerPool?.call();
-        final pkgMap = pool != null
+        final pkg = pool != null
             ? await pool.decodePackument(response.bodyBytes)
             : await _decodePackumentBytes(response.bodyBytes);
-        final pkg = Packument.fromJson(pkgMap);
         final fresh = _freshUntilFromHeaders(response.headers);
         _packumentCache[name] = CachedPackument(
           packument: pkg,
