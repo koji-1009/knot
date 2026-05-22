@@ -49,18 +49,30 @@ runs, because the link hook is not invoked.
 `tools/bench/run.sh` measures cold + warm install time and peak memory across
 knot, pnpm, npm, and bun on a chosen fixture. Cold runs wipe each tool's
 global cache/store first; warm runs only clear `node_modules`. Each scenario
-is run N times and the median is reported.
+is run N times and the table reports best / median / worst (so the network
+floor and the tail are both visible alongside the typical observation).
 
 ```
-./tools/bench/run.sh --fixture vite-react --tools knot,pnpm,npm,bun --runs 3
+./tools/bench/run.sh --fixture vite-react --tools knot,pnpm,npm,bun
 ```
 
 | Flag | Default | Notes |
 |------|---------|-------|
 | `--fixture NAME` | `vite-react` | Any directory under `tools/compat_test/fixtures/` |
-| `--runs N` | `3` | Repetitions per scenario; medians reported |
+| `--cold-runs N` | `15` | Cold-scenario repetitions (network-bound; observed spreads of ~5x argue against fewer) |
+| `--warm-runs N` | `20` | Warm-scenario repetitions (no network cost — packument freshness + store hits — so sampling more is free) |
+| `--runs N` | — | Shortcut that sets both `--cold-runs` and `--warm-runs` to `N` |
 | `--tools LIST` | `knot,pnpm` | Comma-separated subset of `knot,pnpm,npm,bun` |
 | `--knot-bin PATH` | (auto-build) | Reuse an existing knot binary instead of running `dart build cli` |
+
+Warm timings come from `/usr/bin/time` (`real` at 0.01s resolution), which
+is too coarse for sub-100ms tools — run those through `hyperfine`
+separately when you need ms precision:
+
+```
+hyperfine --warmup 2 --runs 20 --prepare 'rm -rf node_modules' \
+  '<tool> install'
+```
 
 macOS and Linux are supported (`/usr/bin/time -lp` / `-v`); Windows is not.
 

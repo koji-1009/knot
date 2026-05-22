@@ -5,6 +5,21 @@
 # fixture across knot, pnpm, npm, bun. Cold runs wipe each tool's
 # global cache/store first; warm runs only clear node_modules.
 #
+# Defaults are asymmetric on purpose:
+#   - cold = 15 runs.  Network-bound; observed spreads of 5x are
+#     common, so 15 samples is the minimum that yields a stable
+#     median without pounding the CDN.
+#   - warm = 20 runs.  No network cost (packument freshness window +
+#     store hits make warm a pure local-CPU/IO scenario), so sampling
+#     more is free.
+#
+# Warm timings here come from `/usr/bin/time`, which on macOS reports
+# `real` at 0.01s resolution. That is too coarse for sub-100ms tools
+# (bun warm pegs at 0). For ms-precise warm timings drive each tool
+# through hyperfine separately:
+#   hyperfine --warmup 2 --runs 20 --prepare 'rm -rf node_modules' \
+#     '<tool> install'
+#
 # macOS and Linux are supported (different `/usr/bin/time` flags).
 set -euo pipefail
 
@@ -13,30 +28,35 @@ show_help() {
 Usage: tools/bench/run.sh [options]
 
 Options:
-  --fixture NAME   fixture under tools/compat_test/fixtures (default: vite-react)
-  --runs N         repetitions per scenario; medians are reported (default: 3)
-  --tools LIST     comma-separated subset of: knot,pnpm,npm,bun (default: knot,pnpm)
-  --knot-bin PATH  use an existing knot binary; otherwise dart build cli is invoked
-  -h, --help       this help
+  --fixture NAME     fixture under tools/compat_test/fixtures (default: vite-react)
+  --cold-runs N      cold-scenario repetitions (default: 15)
+  --warm-runs N      warm-scenario repetitions (default: 20)
+  --runs N           shortcut that sets both cold-runs and warm-runs to N
+  --tools LIST       comma-separated subset of: knot,pnpm,npm,bun (default: knot,pnpm)
+  --knot-bin PATH    use an existing knot binary; otherwise dart build cli is invoked
+  -h, --help         this help
 
 Example:
-  tools/bench/run.sh --fixture vite-react --tools knot,pnpm --runs 5
+  tools/bench/run.sh --fixture vite-react --tools knot,pnpm,npm,bun
 EOF
 }
 
 fixture="vite-react"
-runs=3
+cold_runs=15
+warm_runs=20
 tools_csv="knot,pnpm"
 knot_bin="${KNOT_BIN:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --fixture) fixture="$2"; shift 2 ;;
-    --runs) runs="$2"; shift 2 ;;
-    --tools) tools_csv="$2"; shift 2 ;;
-    --knot-bin) knot_bin="$2"; shift 2 ;;
-    -h|--help) show_help; exit 0 ;;
-    *) echo "unknown arg: $1" >&2; exit 64 ;;
+    --fixture)   fixture="$2"; shift 2 ;;
+    --cold-runs) cold_runs="$2"; shift 2 ;;
+    --warm-runs) warm_runs="$2"; shift 2 ;;
+    --runs)      cold_runs="$2"; warm_runs="$2"; shift 2 ;;
+    --tools)     tools_csv="$2"; shift 2 ;;
+    --knot-bin)  knot_bin="$2"; shift 2 ;;
+    -h|--help)   show_help; exit 0 ;;
+    *)           echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
 
@@ -153,6 +173,9 @@ median() {
     }'
 }
 
+min() { sort -n | head -1; }
+max() { sort -n | tail -1; }
+
 format_ms() {
   # `%d` truncates to zero for sub-ms runs (bun-warm hits this);
   # `%.1f` keeps a digit for small values without faking precision
@@ -167,10 +190,10 @@ format_mb() { awk -v b="$1" 'BEGIN {printf "%.1f MB", b / 1024 / 1024}'; }
 
 # --- main loop ---------------------------------------------------------------
 
-echo "## bench: $fixture (median of $runs runs)"
+echo "## bench: $fixture (cold N=$cold_runs / warm N=$warm_runs)"
 echo
-echo "| tool | scenario | time | peak memory |"
-echo "|------|----------|------|-------------|"
+echo "| tool | scenario | best | median | worst | peak memory |"
+echo "|------|----------|------|--------|-------|-------------|"
 
 IFS=',' read -ra tool_list <<< "$tools_csv"
 for tool in "${tool_list[@]}"; do
@@ -179,8 +202,13 @@ for tool in "${tool_list[@]}"; do
     continue
   fi
   for scenario in cold warm; do
+    if [ "$scenario" = "cold" ]; then
+      n="$cold_runs"
+    else
+      n="$warm_runs"
+    fi
     times=() peaks=()
-    for _ in $(seq 1 "$runs"); do
+    for _ in $(seq 1 "$n"); do
       clear_project
       [ "$scenario" = "cold" ] && clear_global_cache "$tool"
       # warm scenarios need an established lockfile/cache from a
@@ -194,7 +222,9 @@ for tool in "${tool_list[@]}"; do
       peaks+=("$p")
     done
     median_t=$(printf '%s\n' "${times[@]}" | median)
+    min_t=$(printf '%s\n' "${times[@]}" | min)
+    max_t=$(printf '%s\n' "${times[@]}" | max)
     median_p=$(printf '%s\n' "${peaks[@]}" | median)
-    echo "| $tool | $scenario | $(format_ms "$median_t") | $(format_mb "$median_p") |"
+    echo "| $tool | $scenario | $(format_ms "$min_t") | $(format_ms "$median_t") | $(format_ms "$max_t") | $(format_mb "$median_p") |"
   done
 done
