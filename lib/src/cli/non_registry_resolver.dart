@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:http/http.dart' as http;
 import 'package:knot/src/core/core.dart';
 import 'package:knot/src/linker/linker.dart';
 import 'package:knot/src/archive/archive.dart';
@@ -37,17 +36,21 @@ class NonRegistryResolver {
   NonRegistryResolver({
     required this.projectRoot,
     required this.store,
-    http.Client? client,
-  }) : _client = client ?? http.Client(),
-       _ownsClient = client == null;
+    HttpClient? httpClient,
+  }) : _http = httpClient ?? _buildDefault(),
+       _ownsClient = httpClient == null;
+
+  static HttpClient _buildDefault() {
+    return HttpClient()..idleTimeout = const Duration(seconds: 30);
+  }
 
   final String projectRoot;
   final Store store;
-  final http.Client _client;
+  final HttpClient _http;
   final bool _ownsClient;
 
   void close() {
-    if (_ownsClient) _client.close();
+    if (_ownsClient) _http.close(force: true);
   }
 
   Future<NonRegistryResolution> resolve(DependencySpec spec) =>
@@ -112,15 +115,8 @@ class NonRegistryResolver {
     if (url.isEmpty) {
       throw UsageError('https specifier missing URL: ${spec.logicalName}');
     }
-    final response = await _client.get(Uri.parse(url));
-    if (response.statusCode >= 400) {
-      throw NetworkError(
-        'GET $url failed (${response.statusCode})',
-        statusCode: response.statusCode,
-        uri: Uri.parse(url),
-      );
-    }
-    final bytes = response.bodyBytes;
+    final uri = Uri.parse(url);
+    final bytes = await _getBytes(uri);
     final sha = _sha512(bytes);
     await store.ingestTarball(bytes: bytes, tarballSha512Hex: sha);
 
@@ -241,4 +237,22 @@ class NonRegistryResolver {
   }
 
   String _sha512(Uint8List bytes) => KnotHash.sha512Hex(bytes);
+
+  Future<Uint8List> _getBytes(Uri uri) async {
+    final request = await _http.getUrl(uri);
+    final response = await request.close();
+    if (response.statusCode >= 400) {
+      await response.drain<void>();
+      throw NetworkError(
+        'GET $uri failed (${response.statusCode})',
+        statusCode: response.statusCode,
+        uri: uri,
+      );
+    }
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in response) {
+      builder.add(chunk);
+    }
+    return builder.takeBytes();
+  }
 }

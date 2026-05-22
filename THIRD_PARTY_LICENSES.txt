@@ -219,7 +219,6 @@ Components covered by this license:
     ffi               (2019)
     file              (2017)
     glob              (2014)
-    http              (2014)
     http_parser       (2014)
     meta              (2016)
     path              (2014)
@@ -231,6 +230,7 @@ Components covered by this license:
     term_glyph        (2017)
     typed_data        (2015)
     web               (2023)
+    yaml_edit         (2020)
 
 
 License text:
@@ -273,6 +273,9 @@ Components covered by this license:
                        BoringSSL native library is Apache-2.0 — see above.)
 
   tar                  Copyright (c) 2021 Simon Binder
+
+  yaml                 Copyright (c) 2014 the Dart project authors
+                       Copyright (c) 2006 Kirill Simonov
 
 
 License text:

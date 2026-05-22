@@ -68,7 +68,7 @@ macOS and Linux are supported (`/usr/bin/time -lp` / `-v`); Windows is not.
 
 Sample numbers from one author run on **macOS arm64 (M2)**, fixture
 `vite-react` (16 packages: react + react-dom + vite with its transitive
-deps), measured 2026-05-22.
+deps), measured 2026-05-23.
 
 Pinned versions (everything below is sensitive to the package manager's
 implementation language and release, especially while bun is mid-migration
@@ -82,22 +82,23 @@ from Zig to Rust — these numbers belong to **this** set of versions):
 | npm | 11.12.1 |
 | bun | 1.3.14 |
 
-| tool | scenario | time | peak memory |
-|------|----------|------|-------------|
-| **knot** | cold     | **1400 ms**       | **200 MB** |
-| **knot** | warm     | **26.3 ± 0.7 ms** |  **11 MB** |
-| pnpm | cold     | 1595 ms       | 395 MB |
-| pnpm | warm     | 253.9 ± 2.0 ms | 266 MB |
-| npm  | cold     | 8485 ms       | 380 MB |
-| npm  | warm     | 385.1 ± 19.0 ms | 106 MB |
-| bun  | cold     | 1065 ms       | 134 MB |
-| bun  | warm     | **8.5 ± 0.5 ms**  |   **8 MB** |
+| tool | scenario | time (center [min … max])           | peak memory |
+|------|----------|--------------------------------------|-------------|
+| **knot** | cold | **1470 ms** [1180 … 1740]            | **137 MB**  |
+| **knot** | warm | **54.3 ± 0.6 ms** [53.1 … 55.0]      |  **11 MB**  |
+| pnpm | cold | 2070 ms [1570 … 2670]                | 406 MB      |
+| pnpm | warm | 281.0 ± 1.5 ms [277.8 … 283.2]       | 266 MB      |
+| npm  | cold | 6890 ms [6520 … 7220]                | 381 MB      |
+| npm  | warm | 432.5 ± 30.2 ms [408.7 … 507.6]      | 106 MB      |
+| bun  | cold | 1740 ms [1340 … 4380]                | 125 MB      |
+| bun  | warm | **8.2 ± 0.5 ms** [7.8 … 9.4]         |   **8 MB**  |
 
-Cold times are the median of 10 `tools/bench/run.sh` runs (network-bound, day
-to day variance dwarfs measurement precision). Warm times come from
-`hyperfine --warmup 2 --runs 10` (mean ± σ) with each tool seeded against
-its own lockfile. Peak memory is `/usr/bin/time -lp`'s `peak memory
-footprint`.
+Cold = median of 5 `tools/bench/run.sh` runs (the range reflects how
+network-bound cold installs are — single-digit reruns are not enough to
+beat that noise; treat the bracket as the day's spread, not a confidence
+interval). Warm = `hyperfine --warmup 2 --runs 10` (mean ± σ, plus
+observed [min … max]) with each tool seeded against its own lockfile.
+Peak memory is `/usr/bin/time -lp`'s `peak memory footprint`.
 
 Rerun in your own environment with the current versions for an up-to-date
 picture — bun's Zig→Rust migration in particular is in flux.

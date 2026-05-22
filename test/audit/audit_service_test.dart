@@ -1,11 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart' as http_testing;
 import 'package:knot/src/audit/audit.dart';
 import 'package:knot/src/lockfile/lockfile.dart';
 import 'package:knot/src/npmrc/npmrc.dart';
 import 'package:test/test.dart';
+
+import '../_support/loopback.dart';
 
 Lockfile _lockOf(Map<String, String> nameToVersion) {
   return Lockfile(
@@ -33,14 +34,15 @@ NpmrcConfig _npmrc({Map<String, String>? entries}) =>
 void main() {
   group('AuditService', () {
     test('returns empty report for empty lockfile', () async {
-      final calls = <http.Request>[];
+      final calls = <HttpRequest>[];
+      final fake = await startLoopback((req) async {
+        calls.add(req);
+        req.response.statusCode = 200;
+        req.response.write('{}');
+      });
       final service = AuditService(
-        config: _npmrc(),
+        config: _npmrc(entries: {'registry': fake.uri.toString()}),
         userAgent: 'knot-test',
-        client: http_testing.MockClient((req) async {
-          calls.add(req);
-          return http.Response('{}', 200);
-        }),
       );
       try {
         final report = await service.audit(_lockOf({}));
@@ -48,35 +50,36 @@ void main() {
         expect(calls, isEmpty);
       } finally {
         service.close();
+        await fake.server.close(force: true);
       }
     });
 
     test('flags installed versions inside vulnerable_versions range', () async {
+      final fake = await startLoopback((req) async {
+        expect(req.method, 'POST');
+        expect(req.uri.path, endsWith('-/npm/v1/security/advisories/bulk'));
+        final body = jsonDecode(await utf8.decoder.bind(req).join()) as Map;
+        expect(body['lodash'], contains('4.17.0'));
+        req.response.statusCode = 200;
+        req.response.write(
+          jsonEncode({
+            'lodash': [
+              {
+                'id': 'GHSA-test-0001',
+                'severity': 'high',
+                'title': 'Prototype pollution',
+                'module_name': 'lodash',
+                'vulnerable_versions': '<4.17.21',
+                'patched_versions': '>=4.17.21',
+                'url': 'https://example.invalid/advisory/1',
+              },
+            ],
+          }),
+        );
+      });
       final service = AuditService(
-        config: _npmrc(),
+        config: _npmrc(entries: {'registry': fake.uri.toString()}),
         userAgent: 'knot-test',
-        client: http_testing.MockClient((req) async {
-          expect(req.method, 'POST');
-          expect(req.url.path, endsWith('-/npm/v1/security/advisories/bulk'));
-          final body = jsonDecode(req.body) as Map;
-          expect(body['lodash'], contains('4.17.0'));
-          return http.Response(
-            jsonEncode({
-              'lodash': [
-                {
-                  'id': 'GHSA-test-0001',
-                  'severity': 'high',
-                  'title': 'Prototype pollution',
-                  'module_name': 'lodash',
-                  'vulnerable_versions': '<4.17.21',
-                  'patched_versions': '>=4.17.21',
-                  'url': 'https://example.invalid/advisory/1',
-                },
-              ],
-            }),
-            200,
-          );
-        }),
       );
       try {
         final report = await service.audit(_lockOf({'lodash': '4.17.0'}));
@@ -90,51 +93,56 @@ void main() {
         expect(report.meetsThreshold(AuditSeverity.critical), isFalse);
       } finally {
         service.close();
+        await fake.server.close(force: true);
       }
     });
 
     test('re-filters server-returned advisories that do not match installed '
         'versions (defense against private registry drift)', () async {
+      final fake = await startLoopback((req) async {
+        await utf8.decoder.bind(req).join();
+        req.response.statusCode = 200;
+        req.response.write(
+          jsonEncode({
+            'lodash': [
+              {
+                'id': 'stale',
+                'severity': 'critical',
+                'title': 'Was patched',
+                'module_name': 'lodash',
+                // Installed 4.17.21 is OUTSIDE this range.
+                'vulnerable_versions': '<4.17.21',
+                'patched_versions': '>=4.17.21',
+                'url': '',
+              },
+            ],
+          }),
+        );
+      });
       final service = AuditService(
-        config: _npmrc(),
+        config: _npmrc(entries: {'registry': fake.uri.toString()}),
         userAgent: 'knot-test',
-        client: http_testing.MockClient((req) async {
-          return http.Response(
-            jsonEncode({
-              'lodash': [
-                {
-                  'id': 'stale',
-                  'severity': 'critical',
-                  'title': 'Was patched',
-                  'module_name': 'lodash',
-                  // Installed 4.17.21 is OUTSIDE this range.
-                  'vulnerable_versions': '<4.17.21',
-                  'patched_versions': '>=4.17.21',
-                  'url': '',
-                },
-              ],
-            }),
-            200,
-          );
-        }),
       );
       try {
         final report = await service.audit(_lockOf({'lodash': '4.17.21'}));
         expect(report.total, 0);
       } finally {
         service.close();
+        await fake.server.close(force: true);
       }
     });
 
     test(
       'reports endpoint failures rather than treating them as clean',
       () async {
+        final fake = await startLoopback((req) async {
+          await utf8.decoder.bind(req).join();
+          req.response.statusCode = 429;
+          req.response.write('{"error": "rate limited"}');
+        });
         final service = AuditService(
-          config: _npmrc(),
+          config: _npmrc(entries: {'registry': fake.uri.toString()}),
           userAgent: 'knot-test',
-          client: http_testing.MockClient((req) async {
-            return http.Response('{"error": "rate limited"}', 429);
-          }),
         );
         try {
           final report = await service.audit(_lockOf({'react': '18.2.0'}));
@@ -143,36 +151,47 @@ void main() {
           expect(report.advisoryFetchErrors.first, contains('429'));
         } finally {
           service.close();
+          await fake.server.close(force: true);
         }
       },
     );
 
     test('groups scoped packages by their scope-specific registry', () async {
-      final urls = <Uri>[];
+      // Two loopback servers so the scope-specific registry mapping
+      // actually routes traffic to different endpoints.
+      final publicCalls = <Uri>[];
+      final privateCalls = <Uri>[];
+      final pub = await startLoopback((req) async {
+        publicCalls.add(req.uri);
+        await utf8.decoder.bind(req).join();
+        req.response.statusCode = 200;
+        req.response.write('{}');
+      });
+      final priv = await startLoopback((req) async {
+        privateCalls.add(req.uri);
+        await utf8.decoder.bind(req).join();
+        req.response.statusCode = 200;
+        req.response.write('{}');
+      });
       final service = AuditService(
         config: _npmrc(
           entries: {
-            'registry': 'https://registry.public.example/',
-            '@private:registry': 'https://registry.private.example/',
+            'registry': pub.uri.toString(),
+            '@private:registry': priv.uri.toString(),
           },
         ),
         userAgent: 'knot-test',
-        client: http_testing.MockClient((req) async {
-          urls.add(req.url);
-          return http.Response('{}', 200);
-        }),
       );
       try {
         await service.audit(
           _lockOf({'react': '18.0.0', '@private/util': '1.0.0'}),
         );
-        expect(urls.length, 2);
-        expect(urls.map((u) => u.host).toSet(), {
-          'registry.public.example',
-          'registry.private.example',
-        });
+        expect(publicCalls, hasLength(1));
+        expect(privateCalls, hasLength(1));
       } finally {
         service.close();
+        await pub.server.close(force: true);
+        await priv.server.close(force: true);
       }
     });
 
@@ -192,13 +211,15 @@ void main() {
         },
       );
       var calls = 0;
+      final fake = await startLoopback((req) async {
+        calls++;
+        await utf8.decoder.bind(req).join();
+        req.response.statusCode = 200;
+        req.response.write('{}');
+      });
       final service = AuditService(
-        config: _npmrc(),
+        config: _npmrc(entries: {'registry': fake.uri.toString()}),
         userAgent: 'knot-test',
-        client: http_testing.MockClient((req) async {
-          calls++;
-          return http.Response('{}', 200);
-        }),
       );
       try {
         final report = await service.audit(lock);
@@ -206,6 +227,7 @@ void main() {
         expect(report.total, 0);
       } finally {
         service.close();
+        await fake.server.close(force: true);
       }
     });
   });

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
-import 'package:http/http.dart' as http;
 import 'package:knot/src/lockfile/lockfile.dart';
 import 'package:knot/src/npmrc/npmrc.dart';
 import 'package:knot/src/semver/semver.dart';
@@ -67,17 +67,21 @@ class AuditService {
   AuditService({
     required this.config,
     required this.userAgent,
-    http.Client? client,
-  }) : _client = client ?? http.Client(),
-       _ownsClient = client == null;
+    HttpClient? httpClient,
+  }) : _http = httpClient ?? _buildDefault(),
+       _ownsClient = httpClient == null;
+
+  static HttpClient _buildDefault() {
+    return HttpClient()..idleTimeout = const Duration(seconds: 30);
+  }
 
   final NpmrcConfig config;
   final String userAgent;
-  final http.Client _client;
+  final HttpClient _http;
   final bool _ownsClient;
 
   void close() {
-    if (_ownsClient) _client.close();
+    if (_ownsClient) _http.close(force: true);
   }
 
   Future<AuditReport> audit(Lockfile lock) async {
@@ -129,22 +133,28 @@ class AuditService {
       'user-agent': userAgent,
       ..._authHeaders(registry),
     };
-    final http.Response response;
+    final int statusCode;
+    final String responseBody;
     try {
-      response = await _client.post(endpoint, headers: headers, body: body);
+      final request = await _http.postUrl(endpoint);
+      headers.forEach((k, v) => request.headers.set(k, v));
+      final encoded = utf8.encode(body);
+      request.contentLength = encoded.length;
+      request.add(encoded);
+      final response = await request.close();
+      statusCode = response.statusCode;
+      responseBody = await response.transform(utf8.decoder).join();
     } on Object catch (e) {
       errors.add('${registry.host}: $e');
       return;
     }
-    if (response.statusCode >= 400) {
-      errors.add(
-        '${registry.host}: HTTP ${response.statusCode} on advisories/bulk',
-      );
+    if (statusCode >= 400) {
+      errors.add('${registry.host}: HTTP $statusCode on advisories/bulk');
       return;
     }
     final Object? decoded;
     try {
-      decoded = jsonDecode(response.body);
+      decoded = jsonDecode(responseBody);
     } on FormatException catch (e) {
       errors.add('${registry.host}: malformed JSON: ${e.message}');
       return;

@@ -153,6 +153,9 @@ median() {
     }'
 }
 
+min() { sort -n | head -1; }
+max() { sort -n | tail -1; }
+
 format_ms() {
   # `%d` truncates to zero for sub-ms runs (bun-warm hits this);
   # `%.1f` keeps a digit for small values without faking precision
@@ -167,10 +170,10 @@ format_mb() { awk -v b="$1" 'BEGIN {printf "%.1f MB", b / 1024 / 1024}'; }
 
 # --- main loop ---------------------------------------------------------------
 
-echo "## bench: $fixture (median of $runs runs)"
+echo "## bench: $fixture (median of $runs runs, range = [min … max])"
 echo
-echo "| tool | scenario | time | peak memory |"
-echo "|------|----------|------|-------------|"
+echo "| tool | scenario | time (median [min … max]) | peak memory |"
+echo "|------|----------|---------------------------|-------------|"
 
 IFS=',' read -ra tool_list <<< "$tools_csv"
 for tool in "${tool_list[@]}"; do
@@ -194,7 +197,9 @@ for tool in "${tool_list[@]}"; do
       peaks+=("$p")
     done
     median_t=$(printf '%s\n' "${times[@]}" | median)
+    min_t=$(printf '%s\n' "${times[@]}" | min)
+    max_t=$(printf '%s\n' "${times[@]}" | max)
     median_p=$(printf '%s\n' "${peaks[@]}" | median)
-    echo "| $tool | $scenario | $(format_ms "$median_t") | $(format_mb "$median_p") |"
+    echo "| $tool | $scenario | $(format_ms "$median_t") [$(format_ms "$min_t") … $(format_ms "$max_t")] | $(format_mb "$median_p") |"
   done
 done
