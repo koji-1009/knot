@@ -494,7 +494,15 @@ A `package.json` references a catalog entry via the `catalog:` protocol:
 
 ### 10.1 Cache
 
-Cache root: `$HOME/.knot/dlx/<key>/`. `<key>` is the first 16 hex characters of `sha256(sorted "name@version" lines, newline-joined)` across the installed packages. Repeated invocations of the same spec reuse the cache; `knot clean` is responsible for pruning it.
+Cache root: `$HOME/.knot/dlx/<key>/`. `<key>` is derived from the set of installed packages (the `name → version` map fed to the temp `package.json`) as follows:
+
+1. For each entry, render the UTF-8 string `<name>@<version>`. No quoting, no escaping; `<version>` is the resolution input (a range, tag, or exact version), not the resolved version.
+2. Sort the rendered strings in ascending UTF-16 code-unit order (Dart's `List<String>.sort()` default). For ASCII names and versions this matches lexicographic byte order.
+3. Join the sorted strings with a single `\n` (U+000A) separator. No trailing newline.
+4. Compute the SHA-256 digest of the UTF-8 bytes of that joined string. Encode the digest as lowercase hexadecimal.
+5. `<key>` is the first 16 characters of that hex digest.
+
+Repeated invocations of the same spec reuse the cache; `knot clean` is responsible for pruning it.
 
 ### 10.2 Forms
 
