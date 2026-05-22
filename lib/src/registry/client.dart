@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show HttpClient, Platform;
+import 'dart:io' show HttpClient, HttpHeaders, Platform, gzip;
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -94,6 +94,11 @@ class RegistryClient {
     this.preferOffline = false,
     this._getWorkerPool,
   }) : _client = client ?? _buildClient(concurrency),
+       // Only spin up the direct HttpClient when the caller didn't
+       // inject a `client`. Tests rely on injecting a MockClient
+       // through the `client` parameter; bypassing it via the direct
+       // path would route those requests to the real network.
+       _directHttp = client == null ? _buildDirectHttp(concurrency) : null,
        _pool = Pool(concurrency);
 
   /// Build an HTTP client tuned for high-concurrency registry access.
@@ -108,8 +113,21 @@ class RegistryClient {
     return http.IOClient(io);
   }
 
+  /// Direct `dart:io` `HttpClient` used for packument GETs only.
+  /// `autoUncompress = false` keeps response bodies in their raw
+  /// gzip form so the gzip+utf8+JSON decode can be dispatched to the
+  /// worker pool in one shot rather than running on the main
+  /// isolate via `package:http`'s default codec.
+  static HttpClient _buildDirectHttp(int concurrency) {
+    return HttpClient()
+      ..maxConnectionsPerHost = concurrency
+      ..idleTimeout = const Duration(seconds: 30)
+      ..autoUncompress = false;
+  }
+
   final NpmrcConfig config;
   final http.Client _client;
+  final HttpClient? _directHttp;
   final Pool _pool;
   final String userAgent;
 
@@ -160,10 +178,62 @@ class RegistryClient {
   int tarballNetworkFetches = 0;
   int tarballNetworkBytes = 0;
 
-  /// Close the underlying HTTP client and free pool resources.
+  /// Close the underlying HTTP clients and free pool resources.
   void close() {
     _client.close();
+    _directHttp?.close(force: true);
     _pool.close();
+  }
+
+  /// Direct-HttpClient packument GET. Returns a record shaped like
+  /// `package:http`'s `Response` (statusCode + lowercased headers +
+  /// bodyBytes) plus an `isGzip` flag so the caller knows whether to
+  /// dispatch the gzip-aware decode path.
+  Future<
+    ({
+      int statusCode,
+      Map<String, String> headers,
+      Uint8List bodyBytes,
+      bool isGzip,
+    })
+  >
+  _packumentFetch(Uri uri, Map<String, String> reqHeaders) async {
+    final direct = _directHttp;
+    if (direct == null) {
+      // Test path: caller injected a `client`, so route through it
+      // (so MockClient inject still works). `package:http` already
+      // auto-uncompresses gzip, so `isGzip` is always false here.
+      final r = await _client.get(uri, headers: reqHeaders);
+      final headers = <String, String>{};
+      r.headers.forEach((k, v) => headers[k.toLowerCase()] = v);
+      return (
+        statusCode: r.statusCode,
+        headers: headers,
+        bodyBytes: r.bodyBytes,
+        isGzip: false,
+      );
+    }
+    final req = await direct.getUrl(uri);
+    reqHeaders.forEach((k, v) => req.headers.set(k, v));
+    // Tell the registry we accept gzip; with `autoUncompress = false`
+    // the response body stays compressed for us to ship to the worker.
+    req.headers.set(HttpHeaders.acceptEncodingHeader, 'gzip');
+    final resp = await req.close();
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in resp) {
+      builder.add(chunk);
+    }
+    final bytes = builder.takeBytes();
+    final hmap = <String, String>{};
+    resp.headers.forEach((k, v) {
+      hmap[k.toLowerCase()] = v.first;
+    });
+    return (
+      statusCode: resp.statusCode,
+      headers: hmap,
+      bodyBytes: bytes,
+      isGzip: hmap['content-encoding'] == 'gzip',
+    );
   }
 
   Uri _packumentUrl(String name) {
@@ -291,13 +361,14 @@ class RegistryClient {
             'ifmod=${cached?.lastModified}',
           );
         }
-        final response = await _client.get(uri, headers: headers);
+        final response = await _packumentFetch(uri, headers);
         if (Platform.environment['KNOT_PROFILE_HEADERS'] == '1') {
           // ignore: avoid_print
           print(
             '  ← ${response.statusCode} '
             'etag=${response.headers['etag']} '
-            '${response.bodyBytes.length}B',
+            '${response.bodyBytes.length}B '
+            '${response.isGzip ? '(gzip)' : '(raw)'}',
           );
         }
         if (response.statusCode == 304 && cached != null) {
@@ -345,15 +416,21 @@ class RegistryClient {
             uri: uri,
           );
         }
-        // utf8 decode + json parse on a worker isolate so the main
+        // gzip + utf8 + JSON decode on a worker isolate so the main
         // event loop can keep dispatching parallel fetches while CPU-
         // heavy parsing of multi-MB packuments proceeds in parallel.
         // Prefer the shared WorkerPool (no per-call spawn) when
         // injected; fall back to a one-shot isolate otherwise.
         final pool = await _getWorkerPool?.call();
         final pkgMap = pool != null
-            ? await pool.decodePackument(response.bodyBytes)
-            : await _decodePackumentBytes(response.bodyBytes);
+            ? (response.isGzip
+                  ? await pool.decodePackumentGzipped(response.bodyBytes)
+                  : await pool.decodePackument(response.bodyBytes))
+            : await _decodePackumentBytes(
+                response.isGzip
+                    ? Uint8List.fromList(gzip.decode(response.bodyBytes))
+                    : response.bodyBytes,
+              );
         final pkg = Packument.fromJson(pkgMap);
         final fresh = _freshUntilFromHeaders(response.headers);
         _packumentCache[name] = CachedPackument(
@@ -412,51 +489,94 @@ class RegistryClient {
     // store), and CI step retries cover the rest.
     return _pool.withResource(() async {
       tarballNetworkFetches++;
-      final request = http.Request('GET', uri);
-      _authHeaders(uri).forEach((k, v) => request.headers[k] = v);
-      final response = await _client.send(request);
-      if (response.statusCode >= 400) {
-        // Drain to free the socket back to the pool.
-        await response.stream.drain<void>();
-        throw NetworkError(
-          'GET $uri failed (${response.statusCode})',
-          statusCode: response.statusCode,
-          uri: uri,
-        );
-      }
+      final direct = _directHttp;
       final hasher = IncrementalHash.forAlgorithm(expected.algorithm);
-      // Honor the server-declared content length when present:
-      // one upfront allocation, then setRange each chunk into
-      // place. The BytesBuilder path concatenates chunks at
-      // takeBytes(), briefly doubling peak memory; pre-allocating
-      // keeps the peak at 1x for large tarballs.
-      final declared = response.contentLength;
       final Uint8List bytes;
-      if (declared != null && declared > 0) {
-        final buf = Uint8List(declared);
-        var offset = 0;
-        await for (final chunk in response.stream) {
-          hasher.update(chunk);
-          if (offset + chunk.length > declared) {
-            throw NetworkError(
-              'GET $uri returned more bytes than Content-Length advertised',
-              uri: uri,
-            );
+      if (direct == null) {
+        // Test path: route through the injected http.Client.
+        final request = http.Request('GET', uri);
+        _authHeaders(uri).forEach((k, v) => request.headers[k] = v);
+        final response = await _client.send(request);
+        if (response.statusCode >= 400) {
+          await response.stream.drain<void>();
+          throw NetworkError(
+            'GET $uri failed (${response.statusCode})',
+            statusCode: response.statusCode,
+            uri: uri,
+          );
+        }
+        final declared = response.contentLength;
+        if (declared != null && declared > 0) {
+          final buf = Uint8List(declared);
+          var offset = 0;
+          await for (final chunk in response.stream) {
+            hasher.update(chunk);
+            if (offset + chunk.length > declared) {
+              throw NetworkError(
+                'GET $uri returned more bytes than Content-Length advertised',
+                uri: uri,
+              );
+            }
+            buf.setRange(offset, offset + chunk.length, chunk);
+            offset += chunk.length;
           }
-          buf.setRange(offset, offset + chunk.length, chunk);
-          offset += chunk.length;
+          bytes = offset == declared
+              ? buf
+              : Uint8List.sublistView(buf, 0, offset);
+        } else {
+          final builder = BytesBuilder(copy: false);
+          await for (final chunk in response.stream) {
+            builder.add(chunk);
+            hasher.update(chunk);
+          }
+          bytes = builder.takeBytes();
         }
-        // Under-delivery is caught by the hash check below.
-        bytes = offset == declared
-            ? buf
-            : Uint8List.sublistView(buf, 0, offset);
       } else {
-        final builder = BytesBuilder(copy: false);
-        await for (final chunk in response.stream) {
-          builder.add(chunk);
-          hasher.update(chunk);
+        final request = await direct.getUrl(uri);
+        _authHeaders(uri).forEach((k, v) => request.headers.set(k, v));
+        // Tarballs are already gzipped at rest; we never want
+        // `HttpClient` to decompress them, so the `autoUncompress=false`
+        // on _directHttp is exactly what we need.
+        final response = await request.close();
+        if (response.statusCode >= 400) {
+          await response.drain<void>();
+          throw NetworkError(
+            'GET $uri failed (${response.statusCode})',
+            statusCode: response.statusCode,
+            uri: uri,
+          );
         }
-        bytes = builder.takeBytes();
+        // Honor the server-declared content length when present:
+        // one upfront allocation, then setRange each chunk into
+        // place. The BytesBuilder path concatenates chunks at
+        // takeBytes(), briefly doubling peak memory; pre-allocating
+        // keeps the peak at 1x for large tarballs.
+        final declared = response.contentLength;
+        if (declared > 0) {
+          final buf = Uint8List(declared);
+          var offset = 0;
+          await for (final chunk in response) {
+            hasher.update(chunk);
+            if (offset + chunk.length > declared) {
+              throw NetworkError(
+                'GET $uri returned more bytes than Content-Length advertised',
+                uri: uri,
+              );
+            }
+            buf.setRange(offset, offset + chunk.length, chunk);
+            offset += chunk.length;
+          }
+          bytes = offset == declared
+              ? buf
+              : Uint8List.sublistView(buf, 0, offset);
+        } else {
+          final builder = BytesBuilder(copy: false);
+          await for (final chunk in response) {
+            builder.add(chunk);
+            hasher.update(chunk);
+          }
+          bytes = builder.takeBytes();
+        }
       }
       tarballNetworkBytes += bytes.length;
       final digestBase64 = base64.encode(hasher.finish());
