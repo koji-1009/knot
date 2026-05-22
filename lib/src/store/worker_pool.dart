@@ -13,15 +13,22 @@ import 'impl.dart';
 /// install: tarball ingest (gzip + tar + sha512) and hardlink batches.
 ///
 /// Why a single pool?
-/// - Earlier drafts kept two pools, one per concern. Each install paid the
-///   ~200 ms isolate-spawn cost twice. They never run concurrently in
-///   practice (ingest happens during fetch phase, link happens after) so
-///   one pool sized to `numberOfProcessors` is enough.
+/// - Earlier drafts kept two pools, one per concern. They never run
+///   concurrently in practice (ingest happens during fetch phase, link
+///   happens after) so one pool sized to `numberOfProcessors` is enough.
 /// - Mixing `package:pool` (concurrency limiter inside main isolate) with
 ///   FFI work confused two distinct concerns. Pool throttles awaitables;
 ///   it doesn't unblock the isolate thread that FFI sits on. This pool
 ///   handles the actual parallelism; the main isolate keeps `package:pool`
 ///   only for HTTP request count limiting.
+///
+/// Spawn cost: parallel `Isolate.spawn` of `numberOfProcessors` workers
+/// measures **median 0.6 ms (max 2.1 ms) over 20 runs on Dart 3.12 /
+/// macOS arm64 M2** — see `tools/spawn_bench/`. Earlier drafts of this
+/// docstring claimed `~200 ms`; that figure was anecdotal and is not
+/// reproducible against the current implementation. The dominant cold-
+/// install costs are HTTP-bound (packument + tarball fetch), not isolate
+/// spawn.
 class WorkerPool {
   WorkerPool._(this._workers);
 
@@ -35,9 +42,8 @@ class WorkerPool {
     required int size,
   }) async {
     // Spawn all isolates in parallel. The serial `for (await spawn)` form
-    // multiplied isolate-creation latency by `size` — measured ~200 ms on
-    // an 8-core macOS box. Parallel spawn keeps it to one isolate's
-    // worth of latency.
+    // pays each spawn's latency in sequence; the parallel form completes
+    // in one isolate's worth of wall time (see class docstring).
     final workers = await Future.wait([
       for (var i = 0; i < size; i++) _Worker.spawn(storeRoot),
     ]);
