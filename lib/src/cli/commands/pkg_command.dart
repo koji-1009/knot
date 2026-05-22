@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
+import 'package:knot/src/core/core.dart';
 import 'package:path/path.dart' as p;
 
 /// `knot pkg get|set|delete` — minimal package.json field manipulator.
@@ -96,9 +97,35 @@ class _PkgDelete extends Command<int> {
 String _path() => p.join(Directory.current.path, 'package.json');
 
 Future<Map<String, dynamic>> _loadPkg() async {
-  final body = await File(_path()).readAsString();
-  final decoded = jsonDecode(body);
-  if (decoded is! Map) throw StateError('package.json is not a JSON object');
+  final path = _path();
+  final String body;
+  try {
+    body = await File(path).readAsString();
+  } on FileSystemException catch (e) {
+    throw ManifestError(
+      'failed to read package.json at $path: ${e.message}',
+      cause: e,
+      path: path,
+    );
+  }
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(body);
+  } on FormatException catch (e) {
+    final offset = e.offset;
+    final where = offset == null ? '' : ' at offset $offset';
+    throw ManifestError(
+      'package.json at $path is not valid JSON$where: ${e.message}',
+      cause: e,
+      path: path,
+    );
+  }
+  if (decoded is! Map) {
+    throw ManifestError(
+      'package.json at $path is not a JSON object',
+      path: path,
+    );
+  }
   return Map<String, dynamic>.from(decoded);
 }
 
