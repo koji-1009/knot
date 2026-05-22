@@ -37,7 +37,7 @@ void main() {
       );
 
       final project = await Directory(p.join(tmp.path, 'project')).create();
-      final pool = await WorkerPool.spawn(storeRoot: store.root, size: 2);
+      final pool = await WorkerPool.spawn(size: 2);
       final materializer = StoreMaterializer.forPlatform(
         store,
         workerPool: pool,

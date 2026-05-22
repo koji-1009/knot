@@ -109,7 +109,11 @@ class _MacosMaterializer extends StoreMaterializer {
       );
     }
     if (clones.isNotEmpty) {
-      await _fallbackPool.cloneAll(mkdirs: mkdirs, tasks: clones);
+      await _fallbackPool.cloneAll(
+        storeRoot: _store.layout.root,
+        mkdirs: mkdirs,
+        tasks: clones,
+      );
     }
     for (final task in fallback) {
       await materialize(integrity: task.integrity, dest: task.dest);
