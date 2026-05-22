@@ -337,7 +337,7 @@ Consumers: [`optimisticRepeatInstall`](#optimisticrepeatinstall) and [`verifyDep
 Common conventions:
 
 - Exit code `0` on success, `1` on a recoverable failure (failed install, audit findings ≥ configured level), `64` on usage error.
-- Global flags: `--silent`, `--verbose` (`-v`), `--loglevel <silent|error|warn|info|debug|trace>`, `--json`, `--color`, `--version`.
+- Global flags: `--silent`, `--verbose` (`-v`), `--loglevel <silent|error|warn|info|debug|trace>`, `--color`, `--version`.
 
 | Command | Synopsis | Behavior |
 |---|---|---|
