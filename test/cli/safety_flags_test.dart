@@ -27,20 +27,28 @@ void main() {
       expect(parseMinReleaseAge('   '), isNull);
     });
 
-    test('parses day / hour / minute / second suffixes', () {
-      expect(parseMinReleaseAge('7d'), const Duration(days: 7));
-      expect(parseMinReleaseAge('48h'), const Duration(hours: 48));
-      expect(parseMinReleaseAge('30m'), const Duration(minutes: 30));
-      expect(parseMinReleaseAge('60s'), const Duration(seconds: 60));
+    test('parses non-negative integer as minutes (pnpm grammar)', () {
+      expect(parseMinReleaseAge('1440'), const Duration(minutes: 1440));
+      expect(parseMinReleaseAge('10080'), const Duration(minutes: 10080));
+      expect(parseMinReleaseAge('1'), const Duration(minutes: 1));
+    });
+
+    test('0 means no filter (matches pnpm opt-out)', () {
+      expect(parseMinReleaseAge('0'), isNull);
+    });
+
+    test('rejects unit suffixes (pnpm rejects them too)', () {
+      expect(() => parseMinReleaseAge('7d'), throwsA(isA<UsageError>()));
+      expect(() => parseMinReleaseAge('48h'), throwsA(isA<UsageError>()));
+      expect(() => parseMinReleaseAge('30m'), throwsA(isA<UsageError>()));
+      expect(() => parseMinReleaseAge('60s'), throwsA(isA<UsageError>()));
     });
 
     test('rejects malformed values', () {
-      // Missing unit
-      expect(() => parseMinReleaseAge('7'), throwsA(isA<UsageError>()));
-      // Unknown unit
-      expect(() => parseMinReleaseAge('7w'), throwsA(isA<UsageError>()));
-      // Multiple units in one expression — disallowed for unambiguity.
-      expect(() => parseMinReleaseAge('1d2h'), throwsA(isA<UsageError>()));
+      expect(() => parseMinReleaseAge('abc'), throwsA(isA<UsageError>()));
+      expect(() => parseMinReleaseAge('-5'), throwsA(isA<UsageError>()));
+      expect(() => parseMinReleaseAge('1.5'), throwsA(isA<UsageError>()));
+      expect(() => parseMinReleaseAge('1 day'), throwsA(isA<UsageError>()));
     });
   });
 

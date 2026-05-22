@@ -52,11 +52,6 @@ class KnotCommandRunner extends CommandRunner<int> {
         help: 'Set log verbosity (overrides --silent/--verbose).',
       )
       ..addFlag(
-        'json',
-        negatable: false,
-        help: 'Emit machine-readable JSON output where supported.',
-      )
-      ..addFlag(
         'color',
         defaultsTo: true,
         help: 'Colorize output when stdout is a TTY.',
@@ -85,7 +80,11 @@ class KnotCommandRunner extends CommandRunner<int> {
 
   @override
   Future<int?> run(Iterable<String> args) async {
-    final parsed = argParser.parse(args.toList());
+    // Use `parse` (inherited from [CommandRunner]) instead of
+    // `argParser.parse` so an unknown option on a subcommand surfaces
+    // as a `UsageException` (caught by `bin/knot.dart` → exit 64),
+    // not as a bare `FormatException` (exit 70).
+    final parsed = parse(args);
     if (parsed['version'] as bool) {
       print(knotVersion);
       return 0;

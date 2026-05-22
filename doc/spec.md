@@ -45,7 +45,7 @@ The `knot` and `npm` modes share their on-disk surface; the distinction exists o
 
 Settings are read from the first source that defines them, highest priority first:
 
-1. CLI flag (per-command, e.g. `--min-release-age=24h`)
+1. CLI flag (per-command, e.g. `--min-release-age=1440`)
 2. Environment variable: `KNOT_CONFIG_<UPPER_SNAKE_KEY>=<value>`
 3. Project `.npmrc` (walked from the project root up to the filesystem root; the first `.npmrc` found wins)
 4. User `.npmrc` (`~/.npmrc`)
@@ -76,15 +76,15 @@ Each setting below documents: **Type**, **Default**, **Source**, and **Behavior*
 
 #### `minimumReleaseAge`
 
-- **Type**: duration (`24h`, `7d`, `90m`, etc.)
-- **Default**: unset (filter disabled)
+- **Type**: non-negative integer (minutes)
+- **Default**: `0` (filter disabled)
 - **Source**: `.npmrc minimum-release-age=` or CLI `--min-release-age=`
 
-When set, a candidate version `v` of a package is filtered out of the resolver's candidate list when the registry's `time[v]` is more recent than `now - minimumReleaseAge`. The filter requires the full packument (not the slim form); knot requests it automatically when the filter is on.
+When the value is greater than `0`, a candidate version `v` of a package is filtered out of the resolver's candidate list when the registry's `time[v]` is more recent than `now - <value> minutes`. The filter requires the full packument (not the slim form); knot requests it automatically when the filter is on. `0` (or empty / unset) disables the filter. Unit suffixes (`24h`, `7d`, etc.) are rejected — pnpm's `minimumReleaseAge` is plain minutes, and accepting suffixes would make the same `pnpm-workspace.yaml` value behave differently under knot.
 
 ```
-# .npmrc
-minimum-release-age=24h
+# .npmrc — wait 1 day before installing a newly published version
+minimum-release-age=1440
 ```
 
 #### `minimumReleaseAgeStrict`
@@ -313,22 +313,59 @@ Recognized top-level sections: `lockfileVersion`, `settings`, `importers`, `pack
 }
 ```
 
-`hash` is the sha256 of canonical JSON of:
-
-```
-{
-  "dependencies":         <sorted map>,
-  "devDependencies":      <sorted map>,
-  "optionalDependencies": <sorted map>,
-  "peerDependencies":     <sorted map>,
-  "lockfile":             "absent" | "sha256:<hex of lockfile bytes>",
-  "engineKey":            "<engineKey>"
-}
-```
-
 `engineKey`'s `<major>` is the major version pinned by `devEngines.runtime` when present, the value of `KNOT_HOST_NODE_MAJOR` otherwise, and `?` when neither is set. knot does not invoke `node` to detect a host major.
 
 Consumers: [`optimisticRepeatInstall`](#optimisticrepeatinstall) and [`verifyDepsBeforeRun`](#verifydepsbeforerun).
+
+#### 4.3.1 `hash` canonicalization
+
+The `hash` field is computed by the following procedure. A reimplementation that follows it byte-for-byte will produce an identical `hash` value for the same inputs.
+
+1. **Build the input object.** Construct an in-memory object with the following six keys in this exact order. The order is fixed and is **not** alphabetical:
+
+    1. `dependencies` — the project's `package.json#dependencies` (`{}` when absent).
+    2. `devDependencies` — `package.json#devDependencies` (`{}` when absent).
+    3. `optionalDependencies` — `package.json#optionalDependencies` (`{}` when absent).
+    4. `peerDependencies` — `package.json#peerDependencies` (`{}` when absent).
+    5. `lockfile` — the lockfile fingerprint string (see step 2).
+    6. `engineKey` — the engine key string `"<platform>;<arch>;node<major>"`.
+
+2. **Lockfile fingerprint.** The value at `lockfile` is a string formed as follows:
+
+    - When no lockfile path is supplied, or the path does not refer to an existing readable file, the value is the literal string `"absent"`.
+    - Otherwise the lockfile's raw bytes are read **without UTF-8 normalization, without line-ending normalization, and without trimming**, hashed with SHA-256, and the value becomes `"sha256:"` followed by the digest as 64 lowercase hex characters.
+
+3. **Sort each dependency map.** Each of the four dependency maps (`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`) is replaced by a new map whose keys are the original keys sorted in ascending order by **UTF-16 code unit** (the order produced by Dart's `String.compareTo`, equivalent to a `memcmp` over the 16-bit code units). Notable consequences:
+
+    - Uppercase ASCII letters sort **before** lowercase ASCII letters (`'A'` = `0x41` precedes `'a'` = `0x61`).
+    - Scope sigil `@` (`0x40`) sorts before all ASCII letters, so `@scope/foo` precedes `bar`.
+    - Inside a scope, names are compared character-by-character on their UTF-16 units; no locale collation is applied.
+    - Astral-plane characters (any code point ≥ `U+10000`) are compared as their UTF-16 surrogate pair, which preserves code-point order for these characters but means a key starting with such a character sorts after every BMP character.
+
+    The value associated with each key is preserved verbatim (the dependency specifier string).
+
+4. **Encode as canonical JSON.** Serialize the resulting object with a JSON encoder that has these properties — Dart's `dart:convert` `jsonEncode` is the reference implementation:
+
+    - **No insignificant whitespace.** No spaces, no newlines, no indentation. Output between tokens is empty.
+    - **No trailing newline** and **no leading or trailing byte-order mark.**
+    - **Key order in the output equals insertion order** of the object. The top-level object emits keys in the order given in step 1. Each dependency map emits keys in the sorted order from step 3.
+    - **String escaping** follows RFC 8259 with the following concrete rules:
+        - The following characters are emitted as two-character escapes: `\"` for `U+0022`, `\\` for `U+005C`, `\b` for `U+0008`, `\t` for `U+0009`, `\n` for `U+000A`, `\f` for `U+000C`, `\r` for `U+000D`.
+        - Any other code unit in the range `U+0000` … `U+001F` is emitted as a six-character `\u00XX` escape with **lowercase** hex digits.
+        - The forward slash `U+002F` (`/`), `U+003C` (`<`), `U+003E` (`>`), `U+0026` (`&`), `U+0027` (`'`), and `U+007F` (DEL) are **not** escaped; they appear literally.
+        - Code units in `U+0080` … `U+FFFF` that are part of a valid UTF-16 sequence are **not** escaped; they appear as their UTF-8 encoding in the output bytes (see the next bullet). Validly paired surrogates (a high surrogate `U+D800` … `U+DBFF` followed by a low surrogate `U+DC00` … `U+DFFF`) are combined into the astral code point and emitted as its 4-byte UTF-8 sequence.
+        - An **unpaired** surrogate code unit (a high or low surrogate that does not form a valid pair) is emitted as a six-character `\uXXXX` escape with lowercase hex digits.
+    - **Output encoding** is UTF-8. The encoder produces a string of Unicode code points; the byte sequence used for the hash is the UTF-8 encoding of that string with no BOM.
+    - **Numbers and booleans** do not appear in the input object (every value is either a string or a map of strings to strings). A reimplementer only needs to encode JSON strings, objects, and the empty object `{}`.
+
+5. **Hash and format.** Compute the SHA-256 digest of the UTF-8 byte sequence produced in step 4 and format the 32-byte digest as 64 **lowercase** hex characters. The resulting string is the value written to the `hash` field.
+
+A reference example for an empty project (no dependencies of any kind, no lockfile, engine key `"linux;x64;node?"`):
+
+```
+canonical = {"dependencies":{},"devDependencies":{},"optionalDependencies":{},"peerDependencies":{},"lockfile":"absent","engineKey":"linux;x64;node?"}
+hash      = sha256(utf8(canonical))  // lowercase hex
+```
 
 ---
 
@@ -336,12 +373,12 @@ Consumers: [`optimisticRepeatInstall`](#optimisticrepeatinstall) and [`verifyDep
 
 Common conventions:
 
-- Global flags: `--silent`, `--verbose` (`-v`), `--loglevel <silent|error|warn|info|debug|trace>`, `--json`, `--color`, `--version`.
+- Global flags: `--silent`, `--verbose` (`-v`), `--loglevel <silent|error|warn|info|debug|trace>`, `--color`, `--version`.
 - Exit-code semantics are listed in [§5.1 Exit codes](#51-exit-codes).
 
 | Command | Synopsis | Behavior |
 |---|---|---|
-| `install` | `knot install [--frozen-lockfile] [--ignore-scripts] [--allow-scripts=<none\|allowlist\|all>] [--min-release-age=<dur>] [--enforce-signatures=<none\|weak\|strict>] [--audit-level=<low\|moderate\|high\|critical>] [--offline] [--prefer-offline] [--production] [--engine-strict]` | Resolve, fetch, ingest, link. Writes lockfile + workspace state. See [§5.1 Exit codes](#51-exit-codes). |
+| `install` | `knot install [--frozen-lockfile] [--ignore-scripts] [--allow-scripts=<none\|allowlist\|all>] [--min-release-age=<minutes>] [--enforce-signatures=<none\|weak\|strict>] [--audit-level=<low\|moderate\|high\|critical>] [--offline] [--prefer-offline] [--production] [--engine-strict]` | Resolve, fetch, ingest, link. Writes lockfile + workspace state. See [§5.1 Exit codes](#51-exit-codes). |
 | `ci` | `knot ci` | Locked install. Equivalent to `install --frozen-lockfile`; aborts when the lockfile and `package.json` diverge. See [§5.1 Exit codes](#51-exit-codes). |
 | `add` | `knot add <pkg>[@<spec>]...` | Add dependencies to `package.json` and install. |
 | `remove` | `knot remove <pkg>...` | Remove from `package.json` and install. |
@@ -393,6 +430,87 @@ knot uses three primary exit codes (`sysexits.h`-derived: `0`, `64`, `70`) plus 
 | `<child>` | `run`, `exec`, and `dlx` propagate the spawned process's exit code unchanged. |
 
 The `64` and `70` values match `EX_USAGE` and `EX_SOFTWARE` from `sysexits.h`. The `1` value matches the convention used by `npm` and `pnpm` for audit and peer-check failures so existing CI scripts continue to work without re-coding the success / failure split.
+
+### 5.1 JSON output (`--json`)
+
+The global `--json` flag switches a command from its human-oriented output to a machine-readable JSON document on stdout. Diagnostics (warnings, fetch errors) continue to be written to stderr in their normal text form.
+
+Only `audit` reads the global `--json` flag today. `view`, `pkg`, and `sbom` emit JSON unconditionally because their entire purpose is to produce machine-readable data; the `--json` flag is a no-op for them, and they are listed here so their on-the-wire shape is part of the spec. Every other command ignores `--json` and prints the same human-oriented output it would without the flag.
+
+#### `audit` (`--json`)
+
+Top-level shape: a single JSON object. Always emitted on stdout, even when there are no findings.
+
+```
+{
+  "findings": [
+    {
+      "package":             "<string>",          // e.g. "lodash"
+      "installed":           "<string>",          // installed version
+      "severity":            "<string>",          // "info" | "low" | "moderate" | "high" | "critical"
+      "title":               "<string>",
+      "vulnerable_versions": "<string>",          // npm range string
+      "patched_versions":    "<string> | null",   // npm range string, or null when no fix is known
+      "url":                 "<string>",          // advisory URL
+      "id":                  "<string>"           // GHSA ID
+    }
+  ],
+  "totals": {
+    "<severity>": <integer>                       // one entry per severity that has at least one finding
+  },
+  "total":  <integer>,                            // sum of `totals`
+  "errors": [ "<string>", ... ]                   // per-registry advisory fetch errors
+}
+```
+
+`findings` is not deduplicated: the same `(package, id)` pair may appear once per installed version, ordered as encountered by the auditor. Only `totals` keys that have a non-zero count are present; an empty audit emits `"totals": {}`. The `--fix` plan is not represented in JSON; `knot audit --fix --json` still prints the plan in text form on stdout below the JSON object.
+
+#### `view`
+
+Top-level shape depends on the invocation:
+
+- `knot view <pkg>` (no field): a JSON object.
+
+  ```
+  {
+    "name":      "<string>",
+    "dist-tags": { "<tag>": "<version>", ... },   // e.g. { "latest": "1.2.3" }
+    "versions":  [ "<version>", ... ]             // every published version, registry order
+  }
+  ```
+
+- `knot view <pkg> <field>` (one field): a bare JSON value whose type depends on `<field>`:
+  - `name` → string
+  - `versions` → array of strings
+  - `dist-tags` → object of `<tag>` → `<version>`
+  - `latest` → string (or `null` if the packument has no `latest` dist-tag)
+  - any other field → `null`
+
+The pretty-printed form (two-space indent) is what is written to stdout.
+
+#### `pkg`
+
+`knot pkg get <field>...` writes JSON to stdout:
+
+- One `<field>`: the bare JSON value at that path in `package.json`, or `null` when the path does not exist. Compact (no indent).
+- Two or more `<field>`s: a JSON object keyed by the supplied field paths, each value being the resolved value or `null`. Pretty-printed with two-space indent.
+
+`knot pkg set` and `knot pkg delete` mutate `package.json` and produce no stdout output.
+
+#### `sbom`
+
+Top-level shape is fixed by the chosen format. `--sbom-format` is required; the global `--json` flag has no effect.
+
+- `--sbom-format=cyclonedx` emits a CycloneDX 1.7 JSON document. Top-level keys: `bomFormat`, `specVersion`, `serialNumber`, `version`, `metadata`, `components`. `serialNumber` is `urn:knot:sbom:<sha256 hex>` derived from the sorted set of `name@version|integrity` tuples in the lockfile and is therefore stable across re-runs over an unchanged lockfile.
+- `--sbom-format=spdx` emits an SPDX 2.3 JSON document. Top-level keys: `spdxVersion`, `dataLicense`, `SPDXID`, `name`, `documentNamespace`, `creationInfo`, `packages`.
+
+`--sbom-spec-version` overrides the spec version string written into the document but does not change the field layout. The detailed shape of each `components[]` / `packages[]` entry is delegated to the CycloneDX 1.7 and SPDX 2.3 specifications; knot's emitter populates `name`, `version`, `purl` (npm purl), and `hashes` / `checksums` from the lockfile's integrity field when present.
+
+#### Stability
+
+The `--json` schema is **not yet a stable contract for 0.x releases**. Field names may be added, removed, or renamed in a `0.x → 0.x+1` transition without a deprecation period. Tooling that consumes knot's JSON output should pin to a specific knot version. The `1.0` release will freeze the schemas of every `--json`-supporting command listed in this section; later changes will be additive only, or staged through a documented deprecation.
+
+The third-party SBOM document shapes (CycloneDX 1.7, SPDX 2.3) are governed by their respective external specifications, not by knot, and are excluded from the `1.0` freeze.
 
 ---
 
@@ -527,7 +645,15 @@ A `package.json` references a catalog entry via the `catalog:` protocol:
 
 ### 10.1 Cache
 
-Cache root: `$HOME/.knot/dlx/<key>/`. `<key>` is the first 16 hex characters of `sha256(sorted "name@version" lines, newline-joined)` across the installed packages. Repeated invocations of the same spec reuse the cache; `knot clean` is responsible for pruning it.
+Cache root: `$HOME/.knot/dlx/<key>/`. `<key>` is derived from the set of installed packages (the `name → version` map fed to the temp `package.json`) as follows:
+
+1. For each entry, render the UTF-8 string `<name>@<version>`. No quoting, no escaping; `<version>` is the resolution input (a range, tag, or exact version), not the resolved version.
+2. Sort the rendered strings in ascending UTF-16 code-unit order (Dart's `List<String>.sort()` default). For ASCII names and versions this matches lexicographic byte order.
+3. Join the sorted strings with a single `\n` (U+000A) separator. No trailing newline.
+4. Compute the SHA-256 digest of the UTF-8 bytes of that joined string. Encode the digest as lowercase hexadecimal.
+5. `<key>` is the first 16 characters of that hex digest.
+
+Repeated invocations of the same spec reuse the cache; `knot clean` is responsible for pruning it.
 
 ### 10.2 Forms
 

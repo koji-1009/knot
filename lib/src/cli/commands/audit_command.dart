@@ -57,6 +57,11 @@ class AuditCommand extends Command<int> {
             'Comma-separated GHSA IDs to exclude from the report. '
             'Layered on top of `auditConfig.ignoreGhsas` and `.npmrc` '
             'ignore-ghsas; final list is the union.',
+      )
+      ..addFlag(
+        'json',
+        negatable: false,
+        help: 'Emit findings as a machine-readable JSON document on stdout.',
       );
   }
 
@@ -70,7 +75,7 @@ class AuditCommand extends Command<int> {
   @override
   Future<int> run() async {
     final results = argResults!;
-    final json = (globalResults?['json'] as bool?) ?? false;
+    final json = results['json'] as bool;
     final threshold = AuditSeverity.parse(results['audit-level'] as String);
     final root = Directory.current.path;
     final lock = await readProjectLockfile(root);

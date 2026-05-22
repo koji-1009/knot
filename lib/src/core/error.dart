@@ -53,6 +53,12 @@ final class LockfileError extends KnotError {
   final String? path;
 }
 
+/// `package.json` (manifest) schema, parse, or round-trip failures.
+final class ManifestError extends KnotError {
+  const ManifestError(super.message, {super.cause, this.path});
+  final String? path;
+}
+
 /// Misuse of the CLI or invalid configuration.
 final class UsageError extends KnotError {
   const UsageError(super.message, {super.cause});
