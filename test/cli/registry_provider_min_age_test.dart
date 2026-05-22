@@ -1,13 +1,13 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart' as http_testing;
 import 'package:knot/src/cli/registry_provider.dart';
 import 'package:knot/src/core/core.dart';
 import 'package:knot/src/npmrc/npmrc.dart';
 import 'package:knot/src/policy/release_age.dart';
 import 'package:knot/src/registry/registry.dart';
 import 'package:test/test.dart';
+
+import '../_support/loopback.dart';
 
 /// Build a minimal registry response with a `time` map per version.
 String _packumentJson({
@@ -28,8 +28,9 @@ String _packumentJson({
 void main() {
   group('RegistryPackageProvider min-release-age', () {
     test('hides versions younger than the configured cutoff', () async {
-      final mockClient = http_testing.MockClient((req) async {
-        return http.Response(
+      final fake = await startLoopback((req) async {
+        req.response.statusCode = 200;
+        req.response.write(
           _packumentJson(
             name: 'demo',
             latest: '2.0.0',
@@ -39,29 +40,32 @@ void main() {
               '2.0.0': '2026-05-15T00:00:00Z',
             },
           ),
-          200,
         );
       });
       final client = RegistryClient(
-        config: const NpmrcConfig({}),
-        client: mockClient,
+        config: NpmrcConfig({'registry': fake.uri.toString()}),
       );
-      final provider = RegistryPackageProvider(
-        client,
-        // Frozen "now" = 2026-05-18; cutoff = 7 days before = 2026-05-11.
-        // 1.0.0 (2024) → keep, 1.5.0 (2025-05-01) → keep,
-        // 2.0.0 (2026-05-15) → blocked (younger than 7d).
-        minReleaseAge: const Duration(days: 7),
-        now: DateTime.parse('2026-05-18T00:00:00Z'),
-      );
-      final versions = await provider.versions('demo');
-      expect(versions.map((v) => v.toString()), ['1.0.0', '1.5.0']);
-      client.close();
+      try {
+        final provider = RegistryPackageProvider(
+          client,
+          // Frozen "now" = 2026-05-18; cutoff = 7 days before = 2026-05-11.
+          // 1.0.0 (2024) → keep, 1.5.0 (2025-05-01) → keep,
+          // 2.0.0 (2026-05-15) → blocked (younger than 7d).
+          minReleaseAge: const Duration(days: 7),
+          now: DateTime.parse('2026-05-18T00:00:00Z'),
+        );
+        final versions = await provider.versions('demo');
+        expect(versions.map((v) => v.toString()), ['1.0.0', '1.5.0']);
+      } finally {
+        client.close();
+        await fake.server.close(force: true);
+      }
     });
 
     test('strict policy: fails when every version is blocked', () async {
-      final mockClient = http_testing.MockClient((req) async {
-        return http.Response(
+      final fake = await startLoopback((req) async {
+        req.response.statusCode = 200;
+        req.response.write(
           _packumentJson(
             name: 'demo',
             latest: '1.0.0',
@@ -71,39 +75,42 @@ void main() {
               '1.0.0': '2026-05-17T00:00:00Z',
             },
           ),
-          200,
         );
       });
       final client = RegistryClient(
-        config: const NpmrcConfig({}),
-        client: mockClient,
+        config: NpmrcConfig({'registry': fake.uri.toString()}),
       );
-      final provider = RegistryPackageProvider(
-        client,
-        releaseAge: const MinReleaseAgePolicy(
-          minimum: Duration(days: 7),
-          strict: true,
-        ),
-        now: DateTime.parse('2026-05-18T00:00:00Z'),
-      );
-      expect(
-        () => provider.versions('demo'),
-        throwsA(
-          isA<NetworkError>().having(
-            (e) => e.message,
-            'message',
-            contains('minimum-release-age'),
+      try {
+        final provider = RegistryPackageProvider(
+          client,
+          releaseAge: const MinReleaseAgePolicy(
+            minimum: Duration(days: 7),
+            strict: true,
           ),
-        ),
-      );
-      client.close();
+          now: DateTime.parse('2026-05-18T00:00:00Z'),
+        );
+        await expectLater(
+          () => provider.versions('demo'),
+          throwsA(
+            isA<NetworkError>().having(
+              (e) => e.message,
+              'message',
+              contains('minimum-release-age'),
+            ),
+          ),
+        );
+      } finally {
+        client.close();
+        await fake.server.close(force: true);
+      }
     });
 
     test(
       'non-strict fallback: returns lowest immature when all blocked',
       () async {
-        final mockClient = http_testing.MockClient((req) async {
-          return http.Response(
+        final fake = await startLoopback((req) async {
+          req.response.statusCode = 200;
+          req.response.write(
             _packumentJson(
               name: 'demo',
               latest: '1.0.0',
@@ -112,32 +119,35 @@ void main() {
                 '1.0.0': '2026-05-17T00:00:00Z',
               },
             ),
-            200,
           );
         });
         final client = RegistryClient(
-          config: const NpmrcConfig({}),
-          client: mockClient,
+          config: NpmrcConfig({'registry': fake.uri.toString()}),
         );
-        final provider = RegistryPackageProvider(
-          client,
-          releaseAge: const MinReleaseAgePolicy(
-            minimum: Duration(days: 7),
-            // strict: false (default) — fallback to the oldest immature
-          ),
-          now: DateTime.parse('2026-05-18T00:00:00Z'),
-        );
-        final versions = await provider.versions('demo');
-        expect(versions.map((v) => v.toString()), ['0.9.0']);
-        client.close();
+        try {
+          final provider = RegistryPackageProvider(
+            client,
+            releaseAge: const MinReleaseAgePolicy(
+              minimum: Duration(days: 7),
+              // strict: false (default) — fallback to the oldest immature
+            ),
+            now: DateTime.parse('2026-05-18T00:00:00Z'),
+          );
+          final versions = await provider.versions('demo');
+          expect(versions.map((v) => v.toString()), ['0.9.0']);
+        } finally {
+          client.close();
+          await fake.server.close(force: true);
+        }
       },
     );
 
     test(
       'ignoreMissingTime: passes through versions without time entries',
       () async {
-        final mockClient = http_testing.MockClient((req) async {
-          return http.Response(
+        final fake = await startLoopback((req) async {
+          req.response.statusCode = 200;
+          req.response.write(
             jsonEncode({
               'name': 'demo',
               'dist-tags': {'latest': '1.0.0'},
@@ -146,75 +156,83 @@ void main() {
               },
               'time': <String, String>{},
             }),
-            200,
           );
         });
         final client = RegistryClient(
-          config: const NpmrcConfig({}),
-          client: mockClient,
+          config: NpmrcConfig({'registry': fake.uri.toString()}),
         );
+        try {
+          final provider = RegistryPackageProvider(
+            client,
+            releaseAge: const MinReleaseAgePolicy(
+              minimum: Duration(days: 7),
+              // ignoreMissingTime defaults to true
+            ),
+            now: DateTime.parse('2026-05-18T00:00:00Z'),
+          );
+          final versions = await provider.versions('demo');
+          expect(versions.single.toString(), '1.0.0');
+        } finally {
+          client.close();
+          await fake.server.close(force: true);
+        }
+      },
+    );
+
+    test('excludePatterns: package-level bypass of the age check', () async {
+      final fake = await startLoopback((req) async {
+        req.response.statusCode = 200;
+        req.response.write(
+          _packumentJson(
+            name: 'demo',
+            latest: '1.0.0',
+            versionToTime: {'1.0.0': '2026-05-17T00:00:00Z'},
+          ),
+        );
+      });
+      final client = RegistryClient(
+        config: NpmrcConfig({'registry': fake.uri.toString()}),
+      );
+      try {
         final provider = RegistryPackageProvider(
           client,
           releaseAge: const MinReleaseAgePolicy(
             minimum: Duration(days: 7),
-            // ignoreMissingTime defaults to true
+            strict: true,
+            excludePatterns: ['demo'],
           ),
           now: DateTime.parse('2026-05-18T00:00:00Z'),
         );
         final versions = await provider.versions('demo');
         expect(versions.single.toString(), '1.0.0');
+      } finally {
         client.close();
-      },
-    );
-
-    test('excludePatterns: package-level bypass of the age check', () async {
-      final mockClient = http_testing.MockClient((req) async {
-        return http.Response(
-          _packumentJson(
-            name: 'demo',
-            latest: '1.0.0',
-            versionToTime: {'1.0.0': '2026-05-17T00:00:00Z'},
-          ),
-          200,
-        );
-      });
-      final client = RegistryClient(
-        config: const NpmrcConfig({}),
-        client: mockClient,
-      );
-      final provider = RegistryPackageProvider(
-        client,
-        releaseAge: const MinReleaseAgePolicy(
-          minimum: Duration(days: 7),
-          strict: true,
-          excludePatterns: ['demo'],
-        ),
-        now: DateTime.parse('2026-05-18T00:00:00Z'),
-      );
-      final versions = await provider.versions('demo');
-      expect(versions.single.toString(), '1.0.0');
-      client.close();
+        await fake.server.close(force: true);
+      }
     });
 
     test('passes everything through when minReleaseAge is null', () async {
-      final mockClient = http_testing.MockClient((req) async {
-        return http.Response(
+      final fake = await startLoopback((req) async {
+        req.response.statusCode = 200;
+        req.response.write(
           _packumentJson(
             name: 'demo',
             latest: '1.0.0',
             versionToTime: {'1.0.0': '2026-05-17T00:00:00Z'},
           ),
-          200,
         );
       });
       final client = RegistryClient(
-        config: const NpmrcConfig({}),
-        client: mockClient,
+        config: NpmrcConfig({'registry': fake.uri.toString()}),
       );
-      final provider = RegistryPackageProvider(client);
-      final versions = await provider.versions('demo');
-      expect(versions.single.toString(), '1.0.0');
-      client.close();
+      try {
+        final provider = RegistryPackageProvider(client);
+        final versions = await provider.versions('demo');
+        expect(versions.single.toString(), '1.0.0');
+      } finally {
+        client.close();
+        await fake.server.close(force: true);
+      }
     });
   });
 }

@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:boringssl_dart/boringssl_dart.dart';
-import 'package:http/http.dart' as http;
 import 'package:knot/src/core/core.dart';
 import 'package:path/path.dart' as p;
 
@@ -40,14 +39,24 @@ class RegistryKey {
 ///    skip the ~80 ms HTTP round-trip to the registry.
 class RegistryKeyStore {
   RegistryKeyStore({
-    required this.client,
     required this.registry,
+    HttpClient? httpClient,
     Map<String, String> Function(Uri)? authHeadersFor,
     this.cacheDir,
     this._cacheTtl = const Duration(hours: 24),
-  }) : _authHeadersFor = authHeadersFor ?? ((_) => const {});
+  }) : _http = httpClient ?? _buildDefault(),
+       _ownsClient = httpClient == null,
+       _authHeadersFor = authHeadersFor ?? ((_) => const {});
 
-  final http.Client client;
+  static HttpClient _buildDefault() {
+    return HttpClient()..idleTimeout = const Duration(seconds: 30);
+  }
+
+  final HttpClient _http;
+
+  /// True when we built [_http] ourselves and must close it. False
+  /// when the caller injected one — its lifetime belongs to them.
+  final bool _ownsClient;
 
   /// Registry root (e.g. `https://registry.npmjs.org/`).
   final Uri registry;
@@ -61,6 +70,10 @@ class RegistryKeyStore {
 
   Future<Map<String, RegistryKey>>? _inflight;
   Map<String, RegistryKey>? _keys;
+
+  void close() {
+    if (_ownsClient) _http.close(force: true);
+  }
 
   /// Returns the cached key set, fetching it on the first call.
   Future<Map<String, RegistryKey>> keys() {
@@ -88,8 +101,11 @@ class RegistryKeyStore {
 
     // 2) Network. On success, persist to disk for the next process.
     final uri = registry.resolve('-/npm/v1/keys');
-    final response = await client.get(uri, headers: _authHeadersFor(uri));
+    final request = await _http.getUrl(uri);
+    _authHeadersFor(uri).forEach((k, v) => request.headers.set(k, v));
+    final response = await request.close();
     if (response.statusCode >= 400) {
+      await response.drain<void>();
       throw NetworkError(
         'failed to fetch registry signing keys '
         '(HTTP ${response.statusCode})',
@@ -97,8 +113,9 @@ class RegistryKeyStore {
         uri: uri,
       );
     }
-    final parsed = _parseKeys(response.body, source: 'network');
-    await _writeDisk(response.body);
+    final body = await response.transform(utf8.decoder).join();
+    final parsed = _parseKeys(body, source: 'network');
+    await _writeDisk(body);
     _keys = parsed;
     return parsed;
   }
