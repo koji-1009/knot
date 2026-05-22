@@ -69,6 +69,19 @@ class WorkerPool {
     }
   }
 
+  /// gzip + utf8 + JSON decode of a raw packument response body on a
+  /// worker. Lets the caller skip `autoUncompress` on its HttpClient
+  /// and ship the compressed bytes (smaller payload across the isolate
+  /// boundary) without paying the gzip cost on the main isolate.
+  Future<Packument> decodePackumentGzipped(Uint8List bytes) async {
+    final w = await _acquire();
+    try {
+      return await w.decodePackumentGzipped(bytes);
+    } finally {
+      _release(w);
+    }
+  }
+
   /// `clonefile(2)` every (source, target) pair in parallel across
   /// workers. `mkdirs` are pre-created on the main isolate so workers
   /// never race on `mkdir` of the same parent.
@@ -301,6 +314,21 @@ class _Worker {
     return response as Packument;
   }
 
+  Future<Packument> decodePackumentGzipped(Uint8List bytes) async {
+    final response = await _send(
+      (sendPort) => _DecodePackumentGzippedMsg(
+        TransferableTypedData.fromList([bytes]),
+        sendPort,
+      ),
+    );
+    if (response is _Err) {
+      throw StateError(
+        'worker decodePackumentGzipped failed: ${response.message}',
+      );
+    }
+    return response as Packument;
+  }
+
   void close() {
     for (final p in _pending) {
       p.close();
@@ -335,6 +363,12 @@ class _CloneBatchMsg implements _WorkerMsg {
 
 class _DecodePackumentMsg implements _WorkerMsg {
   _DecodePackumentMsg(this.bytes, this.replyTo);
+  final TransferableTypedData bytes;
+  final SendPort replyTo;
+}
+
+class _DecodePackumentGzippedMsg implements _WorkerMsg {
+  _DecodePackumentGzippedMsg(this.bytes, this.replyTo);
   final TransferableTypedData bytes;
   final SendPort replyTo;
 }
@@ -405,6 +439,20 @@ Future<void> _workerMain(SendPort bootReply) async {
       case final _DecodePackumentMsg m:
         try {
           final raw = m.bytes.materialize().asUint8List();
+          final decoded = jsonDecode(utf8.decode(raw));
+          if (decoded is! Map) {
+            m.replyTo.send(_Err('packument is not a JSON object'));
+            break;
+          }
+          final pkg = Packument.fromJson(Map<String, dynamic>.from(decoded));
+          m.replyTo.send(pkg);
+        } on Object catch (e) {
+          m.replyTo.send(_Err('$e'));
+        }
+      case final _DecodePackumentGzippedMsg m:
+        try {
+          final compressed = m.bytes.materialize().asUint8List();
+          final raw = gzip.decode(compressed) as Uint8List;
           final decoded = jsonDecode(utf8.decode(raw));
           if (decoded is! Map) {
             m.replyTo.send(_Err('packument is not a JSON object'));
