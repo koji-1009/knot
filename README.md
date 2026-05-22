@@ -68,7 +68,7 @@ macOS and Linux are supported (`/usr/bin/time -lp` / `-v`); Windows is not.
 
 Sample numbers from one author run on **macOS arm64 (M2)**, fixture
 `vite-react` (16 packages: react + react-dom + vite with its transitive
-deps), measured 2026-05-21.
+deps), measured 2026-05-22.
 
 Pinned versions (everything below is sensitive to the package manager's
 implementation language and release, especially while bun is mid-migration
@@ -79,19 +79,19 @@ from Zig to Rust — these numbers belong to **this** set of versions):
 | Dart SDK (used to build knot) | 3.12.0 |
 | knot | HEAD of this branch |
 | pnpm | 11.1.3 |
-| npm | 11.11.0 |
+| npm | 11.12.1 |
 | bun | 1.3.14 |
 
 | tool | scenario | time | peak memory |
 |------|----------|------|-------------|
-| **knot** | cold     | **1895 ms**        | **173 MB** |
-| **knot** | warm     | **60.1 ± 1.2 ms**  |  **10 MB** |
-| pnpm | cold     | 5345 ms        | 700 MB |
-| pnpm | warm     | 292.1 ± 1.8 ms | 266 MB |
-| npm  | cold     | 10020 ms       | 378 MB |
-| npm  | warm     | 426.0 ± 14.4 ms | 107 MB |
-| bun  | cold     | 1595 ms        | 129 MB |
-| bun  | warm     | **8.4 ± 0.5 ms**   |   **8 MB** |
+| **knot** | cold     | **1400 ms**       | **200 MB** |
+| **knot** | warm     | **26.3 ± 0.7 ms** |  **11 MB** |
+| pnpm | cold     | 1595 ms       | 395 MB |
+| pnpm | warm     | 253.9 ± 2.0 ms | 266 MB |
+| npm  | cold     | 8485 ms       | 380 MB |
+| npm  | warm     | 385.1 ± 19.0 ms | 106 MB |
+| bun  | cold     | 1065 ms       | 134 MB |
+| bun  | warm     | **8.5 ± 0.5 ms**  |   **8 MB** |
 
 Cold times are the median of 10 `tools/bench/run.sh` runs (network-bound, day
 to day variance dwarfs measurement precision). Warm times come from
