@@ -83,7 +83,7 @@ class AuditCommand extends Command<int> {
       stderr.writeln(
         'knot audit: no lockfile found. Run `knot install` first.',
       );
-      return 64;
+      return 1;
     }
     final lockfile = results['production'] as bool
         ? _stripDevOnly(lock, root)

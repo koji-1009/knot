@@ -79,14 +79,14 @@ void main() {
   test('audit --json is accepted as a local flag', () async {
     // Smoke check: arg parser must not reject `--json` for `audit`.
     // We don't need a project here — `audit` will fail at lockfile
-    // discovery, which exits 64 with its own message, but the
-    // failure must come from missing lockfile, not unknown option.
+    // discovery (exit 1, matching pnpm), but the failure must come
+    // from the missing lockfile, not from an unknown option.
     final process = await _runKnot(['audit', '--json']);
     await expectLater(
       process.stderr,
       emitsThrough(contains('no lockfile found')),
     );
-    await process.shouldExit(64);
+    await process.shouldExit(1);
   });
 
   test('add with no arguments exits 64 with usage', () async {

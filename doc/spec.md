@@ -373,30 +373,63 @@ hash      = sha256(utf8(canonical))  // lowercase hex
 
 Common conventions:
 
-- Exit code `0` on success, `1` on a recoverable failure (failed install, audit findings ≥ configured level), `64` on usage error.
 - Global flags: `--silent`, `--verbose` (`-v`), `--loglevel <silent|error|warn|info|debug|trace>`, `--color`, `--version`.
+- Exit-code semantics are listed in [§5.1 Exit codes](#51-exit-codes).
 
 | Command | Synopsis | Behavior |
 |---|---|---|
-| `install` | `knot install [--frozen-lockfile] [--ignore-scripts] [--allow-scripts=<none\|allowlist\|all>] [--min-release-age=<minutes>] [--enforce-signatures=<none\|weak\|strict>] [--audit-level=<low\|moderate\|high\|critical>] [--offline] [--prefer-offline] [--production] [--engine-strict]` | Resolve, fetch, ingest, link. Writes lockfile + workspace state. |
-| `ci` | `knot ci` | Locked install. Equivalent to `install --frozen-lockfile`; aborts when the lockfile and `package.json` diverge. |
+| `install` | `knot install [--frozen-lockfile] [--ignore-scripts] [--allow-scripts=<none\|allowlist\|all>] [--min-release-age=<minutes>] [--enforce-signatures=<none\|weak\|strict>] [--audit-level=<low\|moderate\|high\|critical>] [--offline] [--prefer-offline] [--production] [--engine-strict]` | Resolve, fetch, ingest, link. Writes lockfile + workspace state. See [§5.1 Exit codes](#51-exit-codes). |
+| `ci` | `knot ci` | Locked install. Equivalent to `install --frozen-lockfile`; aborts when the lockfile and `package.json` diverge. See [§5.1 Exit codes](#51-exit-codes). |
 | `add` | `knot add <pkg>[@<spec>]...` | Add dependencies to `package.json` and install. |
 | `remove` | `knot remove <pkg>...` | Remove from `package.json` and install. |
 | `update` | `knot update [<pkg>...]` | Bump within declared ranges. |
 | `list` | `knot list [<pkg>]` | Print the installed dependency tree. |
-| `why` | `knot why <pkg>` | Print reverse-dependency paths leading to a package. |
+| `why` | `knot why <pkg>` | Print reverse-dependency paths leading to a package. See [§5.1 Exit codes](#51-exit-codes). |
 | `outdated` | `knot outdated` | Print packages with newer versions available. |
 | `view` | `knot view <pkg>[@<spec>] [<field>]` | Print packument data. |
 | `pkg` | `knot pkg {get,set} <path> [<value>]` | Read or write fields in `package.json`. |
-| `run` | `knot run <script> [-- <args...>]` | Run a script entry from `package.json#scripts`. Honors [`verifyDepsBeforeRun`](#verifydepsbeforerun). |
-| `exec` | `knot exec <bin> [<args...>]` | Run a binary from `node_modules/.bin`. |
-| `audit` | `knot audit [--ignore-ghsas=<csv>] [--level=<sev>] [--json]` | See [§7 Audit](#7-audit). |
-| `doctor` | `knot doctor` | Print project mode, resolved registry, named registries, registry reachability. |
+| `run` | `knot run <script> [-- <args...>]` | Run a script entry from `package.json#scripts`. Honors [`verifyDepsBeforeRun`](#verifydepsbeforerun). The script's exit code is propagated. |
+| `exec` | `knot exec <bin> [<args...>]` | Run a binary from `node_modules/.bin`. The bin's exit code is propagated. |
+| `audit` | `knot audit [--ignore-ghsas=<csv>] [--level=<sev>] [--json]` | See [§7 Audit](#7-audit) and [§5.1 Exit codes](#51-exit-codes). |
+| `doctor` | `knot doctor` | Print project mode, resolved registry, named registries, registry reachability. See [§5.1 Exit codes](#51-exit-codes). |
 | `config` | `knot config {get,set,delete} <key> [<value>]` | Read or write `.npmrc` entries. |
-| `clean` | `knot clean [--delete-lockfile] [--dry-run]` | Remove `node_modules/`; optionally remove the lockfile. |
-| `peers` | `knot peers check` | Print unsatisfied or mis-versioned peer dependencies. Non-zero exit when any non-optional peer is unsatisfied. |
+| `clean` | `knot clean [--delete-lockfile] [--dry-run]` | Remove `node_modules/`; optionally remove the lockfile. See [§5.1 Exit codes](#51-exit-codes). |
+| `peers` | `knot peers check` | Print unsatisfied or mis-versioned peer dependencies. See [§5.1 Exit codes](#51-exit-codes). |
 | `sbom` | `knot sbom [--format=<cyclonedx\|spdx>] [-o <file>]` | Emit CycloneDX 1.7 or SPDX 2.3 JSON. |
-| `dlx` | `knot dlx [-p <pkg>...] [-c <bin>] [--offline] <pkg> [<args...>]` | See [§10 dlx](#10-dlx). |
+| `dlx` | `knot dlx [-p <pkg>...] [-c <bin>] [--offline] <pkg> [<args...>]` | See [§10 dlx](#10-dlx). The bin's exit code is propagated. |
+
+### 5.1 Exit codes
+
+knot uses three primary exit codes (`sysexits.h`-derived: `0`, `64`, `70`) plus `1` for command-specific "recoverable" outcomes. Commands that spawn a child process (`run`, `exec`, `dlx`) propagate the child's exit code verbatim and may therefore exit with any value the child returns.
+
+| Code | Condition |
+|---|---|
+| `0` | The command completed successfully. |
+| `1` | `audit` found at least one advisory whose severity is ≥ `--audit-level` (default `high`). |
+| `1` | `audit` produced no findings but at least one advisory fetch from the registry failed; the partial result is treated as failure so CI does not pass on incomplete data. |
+| `1` | `peers check` found at least one unsatisfied or mismatched non-optional peer dependency. |
+| `1` | `peers check` could not locate a project lockfile. |
+| `1` | `audit` was invoked without a project lockfile. |
+| `1` | `why` was given a package that is not present in the resolved dependency graph. |
+| `1` | `clean` failed to delete a target path because of a `FileSystemException`. |
+| `1` | `doctor` detected at least one diagnostic failure (`node` is not on `PATH`, or the resolved registry is unreachable). |
+| `64` | The argument parser rejected the invocation: unknown command, unknown flag, missing required value, or an option value outside the declared allowed set. |
+| `64` | A required positional argument is missing or malformed. This covers `add` / `remove` with no package names, `why` / `view` with no package name, `run` with no script name, `exec` with no binary, `list` / `why` invoked without a project lockfile, `pkg get` / `pkg set` / `pkg delete` with no field path, `pkg set` with a value that is not in `path=value` form, `config get` / `config delete` with no key, `config set` with fewer than two arguments, `dlx` with no package, and `dlx` with a malformed scoped package specifier. |
+| `64` | `sbom` was invoked without `--sbom-format`, or without a project lockfile. |
+| `64` | `run` was invoked with a script name that is not present in `package.json#scripts`. |
+| `64` | `exec` was invoked with a binary that is not present in `node_modules/.bin`. |
+| `64` | `dlx` could not locate the user's home directory for the cache root. |
+| `64` | `dlx` finished installing the requested package(s) but the requested bin is not present after install; pass `--call` to disambiguate. |
+| `64` | `install` or `ci` was given an unrecognized value for `--allow-scripts`, `--verify-signatures`, or `--minimum-release-age`. |
+| `64` | `install` or `ci` refused to run a dependency's install-time scripts because the package is not on `allowBuilds` and [`strictDepBuilds`](#strictdepbuilds) is `true`. |
+| `64` | `install` or `ci` ran under [`pmOnFail`](#pmonfail) `error` and the host knot binary does not satisfy `package.json#packageManager` or `package.json#devEngines.packageManager`. |
+| `64` | `install --frozen-lockfile` (or `ci`) found that resolution diverges from `package-lock.json`. |
+| `64` | `install --engine-strict` (or `ci`) found that a dependency's `engines.node` is incompatible with the running node. |
+| `70` | Any other failure raised as a `KnotError` subclass: `NetworkError` (DNS / TLS / connect / timeout / non-2xx HTTP), `IntegrityError` (tarball hash mismatch, signature verification failure, or post-install `--audit-level` finding raised from `install`), `ResolutionError` (solver could not find an assignment), `IoError` (permission, `ENOSPC`, `EXDEV`, etc.), `LockfileError` (lockfile parse or round-trip), `ScriptError` (lifecycle script that surfaced as a hard failure), or `CancelledError`. |
+| `70` | Any unhandled exception that escapes the command runner. The stack trace is written to stderr. |
+| `<child>` | `run`, `exec`, and `dlx` propagate the spawned process's exit code unchanged. |
+
+The `64` and `70` values match `EX_USAGE` and `EX_SOFTWARE` from `sysexits.h`. The `1` value matches the convention used by `npm` and `pnpm` for audit and peer-check failures so existing CI scripts continue to work without re-coding the success / failure split.
 
 ### 5.1 JSON output (`--json`)
 
