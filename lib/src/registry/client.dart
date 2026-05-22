@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show HttpClient, Platform;
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -8,11 +9,35 @@ import 'package:http/io_client.dart' as http;
 import 'package:knot/src/core/core.dart';
 import 'package:knot/src/npmrc/npmrc.dart';
 import 'package:knot/src/signature/signature.dart' as sig;
+import 'package:knot/src/store/store.dart' show WorkerPool;
 import 'package:pool/pool.dart';
 
 import 'cache.dart';
 import 'integrity.dart';
 import 'packument.dart';
+
+/// Decode a packument response body (utf8 + JSON) on a one-shot isolate.
+///
+/// Pulled out of [RegistryClient] so the closure handed to
+/// [Isolate.run] captures only the [TransferableTypedData] wrapper
+/// (sendable) instead of `this` (which would drag in the [Pool] and
+/// [http.Client] and trigger an unsendable-message error). The bytes
+/// move via [TransferableTypedData] for zero-copy transfer.
+///
+/// Used as a fallback when no [WorkerPool] has been injected (warm
+/// installs that hit the disk cache up front never spawn the pool).
+/// The injected path pays no per-call spawn cost.
+Future<Map<String, dynamic>> _decodePackumentBytes(Uint8List bytes) {
+  final transferable = TransferableTypedData.fromList([bytes]);
+  return Isolate.run(() {
+    final raw = transferable.materialize().asUint8List();
+    final decoded = jsonDecode(utf8.decode(raw));
+    if (decoded is! Map) {
+      throw const FormatException('packument is not a JSON object');
+    }
+    return Map<String, dynamic>.from(decoded);
+  });
+}
 
 /// A cached packument with the ETag/Last-Modified server returned and
 /// (when known) the deadline beyond which a revalidation is required.
@@ -67,6 +92,7 @@ class RegistryClient {
     this.cache,
     this.offline = false,
     this.preferOffline = false,
+    this._getWorkerPool,
   }) : _client = client ?? _buildClient(concurrency),
        _pool = Pool(concurrency);
 
@@ -86,6 +112,13 @@ class RegistryClient {
   final http.Client _client;
   final Pool _pool;
   final String userAgent;
+
+  /// Optional lazy accessor to the shared [WorkerPool]. When supplied,
+  /// packument JSON decode is dispatched to a worker isolate via the
+  /// pool instead of spawning a one-shot isolate per packument; this
+  /// pays the spawn cost once at pool startup. `null` in tests / warm
+  /// paths that never go to network.
+  final Future<WorkerPool> Function()? _getWorkerPool;
 
   /// Optional persistent on-disk cache. When set, packuments and tarballs
   /// are written there and consulted on subsequent runs.
@@ -312,11 +345,16 @@ class RegistryClient {
             uri: uri,
           );
         }
-        final decoded = jsonDecode(response.body);
-        if (decoded is! Map) {
-          throw NetworkError('packument is not a JSON object', uri: uri);
-        }
-        final pkg = Packument.fromJson(Map<String, dynamic>.from(decoded));
+        // utf8 decode + json parse on a worker isolate so the main
+        // event loop can keep dispatching parallel fetches while CPU-
+        // heavy parsing of multi-MB packuments proceeds in parallel.
+        // Prefer the shared WorkerPool (no per-call spawn) when
+        // injected; fall back to a one-shot isolate otherwise.
+        final pool = await _getWorkerPool?.call();
+        final pkgMap = pool != null
+            ? await pool.decodePackument(response.bodyBytes)
+            : await _decodePackumentBytes(response.bodyBytes);
+        final pkg = Packument.fromJson(pkgMap);
         final fresh = _freshUntilFromHeaders(response.headers);
         _packumentCache[name] = CachedPackument(
           packument: pkg,

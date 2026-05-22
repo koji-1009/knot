@@ -228,24 +228,26 @@ class InstallOperation {
     await regCache.initialize();
     mark('npmrc + store + cache init');
 
+    // Single worker isolate pool for *all* blocking work in this install:
+    // tarball ingest (gzip + tar + sha512), hardlink / clonefile batches,
+    // and packument JSON decode all travel through this pool. Spawned
+    // lazily so a fully-warm locked install with no extraction and few
+    // link tasks pays no isolate cost. Declared before [RegistryClient]
+    // so the accessor can be injected for packument decode.
+    WorkerPool? workerPool;
+    Future<WorkerPool> getWorkerPool() async {
+      return workerPool ??= await WorkerPool.spawn(
+        size: Platform.numberOfProcessors,
+      );
+    }
+
     final client = RegistryClient(
       config: npmrc,
       cache: regCache,
       offline: options.offline,
       preferOffline: options.preferOffline,
+      getWorkerPool: getWorkerPool,
     );
-
-    // Single worker isolate pool for *all* blocking work in this install:
-    // tarball ingest (gzip + tar + sha512) and hardlink batches both
-    // travel through this pool. Spawned lazily so a fully-warm locked
-    // install with no extraction and few link tasks pays no isolate cost.
-    WorkerPool? workerPool;
-    Future<WorkerPool> getWorkerPool() async {
-      return workerPool ??= await WorkerPool.spawn(
-        storeRoot: storeRoot,
-        size: Platform.numberOfProcessors,
-      );
-    }
 
     // Kick off `node --version` ahead of everything else so its
     // ~45 ms fork+exec runs concurrently with reading lockfiles and
@@ -506,6 +508,7 @@ class InstallOperation {
               }
               final pool = await getWorkerPool();
               await pool.ingest(
+                storeRoot: storeRoot,
                 bytes: bytes,
                 tarballSha512Hex: slice.integrity!,
               );
@@ -1104,7 +1107,11 @@ class InstallOperation {
             );
             _emit(TarballFetched(package: entry.name, version: entry.version));
             final pool = await getWorkerPool();
-            await pool.ingest(bytes: bytes, tarballSha512Hex: entry.integrity!);
+            await pool.ingest(
+              storeRoot: store.layout.root,
+              bytes: bytes,
+              tarballSha512Hex: entry.integrity!,
+            );
             _emit(
               TarballExtracted(package: entry.name, version: entry.version),
             );

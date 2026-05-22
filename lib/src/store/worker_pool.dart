@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
@@ -9,19 +10,20 @@ import 'package:path/path.dart' as p;
 
 import 'impl.dart';
 
-/// Shared worker-isolate pool for all CPU- or syscall-bound work in an
-/// install: tarball ingest (gzip + tar + sha512) and hardlink batches.
+/// Shared worker-isolate pool for every CPU- or syscall-bound task an
+/// install runs: tarball ingest (gzip + tar + sha512), hardlink /
+/// clonefile batches, and packument JSON decode. The pool holds no
+/// per-install state itself — `storeRoot` travels in the message so
+/// the same pool could serve multiple stores. Each worker caches a
+/// `Store` per `storeRoot` so `Store.initialize()`'s mkdir cost is
+/// paid once per (worker, storeRoot) pair, not once per task.
 ///
-/// Why a single pool?
-/// - Earlier drafts kept two pools, one per concern. Each install paid the
-///   ~200 ms isolate-spawn cost twice. They never run concurrently in
-///   practice (ingest happens during fetch phase, link happens after) so
-///   one pool sized to `numberOfProcessors` is enough.
-/// - Mixing `package:pool` (concurrency limiter inside main isolate) with
-///   FFI work confused two distinct concerns. Pool throttles awaitables;
-///   it doesn't unblock the isolate thread that FFI sits on. This pool
-///   handles the actual parallelism; the main isolate keeps `package:pool`
-///   only for HTTP request count limiting.
+/// One pool, not two: ingest and link never run concurrently in
+/// practice (ingest during fetch, link after), so sizing one to
+/// `numberOfProcessors` is enough. `package:pool` is kept only on the
+/// main isolate as an HTTP request count limiter; it can't unblock
+/// the isolate thread that sync FFI sits on, which is what this pool
+/// is for.
 class WorkerPool {
   WorkerPool._(this._workers);
 
@@ -30,55 +32,56 @@ class WorkerPool {
   final Queue<Completer<_Worker>> _waiting = Queue();
   bool _disposed = false;
 
-  static Future<WorkerPool> spawn({
-    required String storeRoot,
-    required int size,
-  }) async {
-    // Spawn all isolates in parallel. The serial `for (await spawn)` form
-    // multiplied isolate-creation latency by `size` — measured ~200 ms on
-    // an 8-core macOS box. Parallel spawn keeps it to one isolate's
-    // worth of latency.
+  static Future<WorkerPool> spawn({required int size}) async {
+    // Spawn all isolates in parallel so the wall time is one isolate's
+    // worth, not `size` isolates' worth.
     final workers = await Future.wait([
-      for (var i = 0; i < size; i++) _Worker.spawn(storeRoot),
+      for (var i = 0; i < size; i++) _Worker.spawn(),
     ]);
     final pool = WorkerPool._(workers);
     pool._idle.addAll(workers);
     return pool;
   }
 
-  /// Run `Store.ingestTarball` on a worker.
   Future<StoredTarball> ingest({
+    required String storeRoot,
     required Uint8List bytes,
     required String tarballSha512Hex,
   }) async {
     final w = await _acquire();
     try {
-      return await w.ingest(bytes, tarballSha512Hex);
+      return await w.ingest(storeRoot, bytes, tarballSha512Hex);
     } finally {
       _release(w);
     }
   }
 
-  /// Recursive `clonefile(2)` calls in parallel across worker isolates.
-  /// `mkdirs` are pre-created on the main isolate so workers never race
-  /// on `mkdir` of the same parent directory.
+  /// utf8 + JSON decode of a packument response body on a worker.
+  /// Caller wraps the returned map with `Packument.fromJson` on the
+  /// main isolate.
+  Future<Map<String, dynamic>> decodePackument(Uint8List bytes) async {
+    final w = await _acquire();
+    try {
+      return await w.decodePackument(bytes);
+    } finally {
+      _release(w);
+    }
+  }
+
+  /// `clonefile(2)` every (source, target) pair in parallel across
+  /// workers. `mkdirs` are pre-created on the main isolate so workers
+  /// never race on `mkdir` of the same parent.
   ///
-  /// Each worker falls back to per-file hardlink (using the store's
-  /// index) if `clonefile` returns EXDEV — that's the only failure mode
-  /// we expect in practice (source and target on different volumes).
+  /// EXDEV (cross-volume) → per-file hardlink fallback inside the
+  /// worker, using the store's index.
   ///
-  /// Why workers? `clonefileSync` is a synchronous FFI call, so a `Pool`
-  /// on the main isolate cannot run them in parallel — each call blocks
-  /// the event loop. Running 58 packages serially on a single isolate
-  /// dominated the warm-install hot path (~63 ms). Pushing the syscalls
-  /// to N isolates lets the kernel actually overlap them.
-  ///
-  /// Tasks are dispatched **dynamically** — each worker pulls the next
-  /// task from a shared queue when it finishes the previous one. Static
-  /// round-robin assignment left fast workers idle while a few slow
-  /// workers (the ones that drew `@types/node`, `vite`, `rollup`, etc.)
-  /// were still inside clonefile.
+  /// Dispatch is dynamic: each worker pulls the next task from a
+  /// shared queue, so slow tasks (large packages) don't strand fast
+  /// workers on a round-robin slice. Per-task IPC (~10-20 µs) is well
+  /// below per-task clonefile cost (~1 ms), so the round-trip is paid
+  /// gladly.
   Future<void> cloneAll({
+    required String storeRoot,
     required Iterable<String> mkdirs,
     required List<CloneTask> tasks,
   }) async {
@@ -101,14 +104,10 @@ class WorkerPool {
     final queue = Queue<CloneTask>.from(tasks);
     final n = _workers.length;
 
-    // Send each worker one task at a time. Small batch IPC overhead
-    // (~10–20 µs per round-trip) is comfortably below the per-task
-    // clonefile cost (~1 ms), so dynamic dispatch is a clear win
-    // over batched round-robin for skewed task durations.
     Future<void> drain(_Worker w) async {
       while (queue.isNotEmpty) {
         final task = queue.removeFirst();
-        await w.cloneBatch([task]);
+        await w.cloneBatch(storeRoot, [task]);
       }
     }
 
@@ -223,11 +222,11 @@ class _Worker {
   final Isolate _isolate;
   final List<ReceivePort> _pending = [];
 
-  static Future<_Worker> spawn(String storeRoot) async {
+  static Future<_Worker> spawn() async {
     final boot = ReceivePort();
     final isolate = await Isolate.spawn(
       _workerMain,
-      _BootMsg(storeRoot, boot.sendPort),
+      boot.sendPort,
       debugName: 'knot-worker',
     );
     final firstMsg = await boot.first;
@@ -253,10 +252,18 @@ class _Worker {
     }
   }
 
-  Future<StoredTarball> ingest(Uint8List bytes, String sha) async {
+  Future<StoredTarball> ingest(
+    String storeRoot,
+    Uint8List bytes,
+    String sha,
+  ) async {
     final response = await _send(
-      (sendPort) =>
-          _IngestMsg(TransferableTypedData.fromList([bytes]), sha, sendPort),
+      (sendPort) => _IngestMsg(
+        storeRoot,
+        TransferableTypedData.fromList([bytes]),
+        sha,
+        sendPort,
+      ),
     );
     if (response is _Err) {
       throw StateError('worker ingest failed: ${response.message}');
@@ -271,11 +278,26 @@ class _Worker {
     }
   }
 
-  Future<void> cloneBatch(List<CloneTask> tasks) async {
-    final response = await _send((sendPort) => _CloneBatchMsg(tasks, sendPort));
+  Future<void> cloneBatch(String storeRoot, List<CloneTask> tasks) async {
+    final response = await _send(
+      (sendPort) => _CloneBatchMsg(storeRoot, tasks, sendPort),
+    );
     if (response is _Err) {
       throw StateError('worker clone batch failed: ${response.message}');
     }
+  }
+
+  Future<Map<String, dynamic>> decodePackument(Uint8List bytes) async {
+    final response = await _send(
+      (sendPort) => _DecodePackumentMsg(
+        TransferableTypedData.fromList([bytes]),
+        sendPort,
+      ),
+    );
+    if (response is _Err) {
+      throw StateError('worker decodePackument failed: ${response.message}');
+    }
+    return response as Map<String, dynamic>;
   }
 
   void close() {
@@ -289,14 +311,9 @@ class _Worker {
 
 sealed class _WorkerMsg {}
 
-class _BootMsg {
-  _BootMsg(this.storeRoot, this.replyTo);
-  final String storeRoot;
-  final SendPort replyTo;
-}
-
 class _IngestMsg implements _WorkerMsg {
-  _IngestMsg(this.bytes, this.tarballSha, this.replyTo);
+  _IngestMsg(this.storeRoot, this.bytes, this.tarballSha, this.replyTo);
+  final String storeRoot;
   final TransferableTypedData bytes;
   final String tarballSha;
   final SendPort replyTo;
@@ -309,8 +326,15 @@ class _LinkBatchMsg implements _WorkerMsg {
 }
 
 class _CloneBatchMsg implements _WorkerMsg {
-  _CloneBatchMsg(this.tasks, this.replyTo);
+  _CloneBatchMsg(this.storeRoot, this.tasks, this.replyTo);
+  final String storeRoot;
   final List<CloneTask> tasks;
+  final SendPort replyTo;
+}
+
+class _DecodePackumentMsg implements _WorkerMsg {
+  _DecodePackumentMsg(this.bytes, this.replyTo);
+  final TransferableTypedData bytes;
   final SendPort replyTo;
 }
 
@@ -319,21 +343,28 @@ class _Err {
   final String message;
 }
 
-Future<void> _workerMain(_BootMsg boot) async {
-  final Store store;
-  try {
-    store = Store(boot.storeRoot);
-    await store.initialize();
-  } on Object catch (e) {
-    boot.replyTo.send(_Err('$e'));
-    return;
-  }
+Future<void> _workerMain(SendPort bootReply) async {
   final mailbox = ReceivePort();
-  boot.replyTo.send(mailbox.sendPort);
+  bootReply.send(mailbox.sendPort);
+
+  // One `Store` per `storeRoot` per worker. `Store.initialize()`'s
+  // mkdir cost is paid once per (worker, storeRoot) pair instead of
+  // once per ingest call.
+  final stores = <String, Store>{};
+  Future<Store> storeFor(String root) async {
+    final cached = stores[root];
+    if (cached != null) return cached;
+    final s = Store(root);
+    await s.initialize();
+    stores[root] = s;
+    return s;
+  }
+
   await for (final msg in mailbox) {
     switch (msg) {
       case final _IngestMsg m:
         try {
+          final store = await storeFor(m.storeRoot);
           final bytes = m.bytes.materialize().asUint8List();
           final result = await store.ingestTarball(
             bytes: bytes,
@@ -354,6 +385,7 @@ Future<void> _workerMain(_BootMsg boot) async {
         }
       case final _CloneBatchMsg m:
         try {
+          final store = await storeFor(m.storeRoot);
           for (final t in m.tasks) {
             try {
               clonefileSync(source: t.source, target: t.target);
@@ -366,6 +398,18 @@ Future<void> _workerMain(_BootMsg boot) async {
             }
           }
           m.replyTo.send(true);
+        } on Object catch (e) {
+          m.replyTo.send(_Err('$e'));
+        }
+      case final _DecodePackumentMsg m:
+        try {
+          final raw = m.bytes.materialize().asUint8List();
+          final decoded = jsonDecode(utf8.decode(raw));
+          if (decoded is! Map) {
+            m.replyTo.send(_Err('packument is not a JSON object'));
+            break;
+          }
+          m.replyTo.send(Map<String, dynamic>.from(decoded));
         } on Object catch (e) {
           m.replyTo.send(_Err('$e'));
         }
