@@ -236,9 +236,7 @@ class InstallOperation {
     // so the accessor can be injected for packument decode.
     WorkerPool? workerPool;
     Future<WorkerPool> getWorkerPool() async {
-      return workerPool ??= await WorkerPool.spawn(
-        size: Platform.numberOfProcessors,
-      );
+      return workerPool ??= await WorkerPool.spawn(size: knotWorkerPoolSize);
     }
 
     final client = RegistryClient(
@@ -446,7 +444,7 @@ class InstallOperation {
         _verifyFrozen(solution, existingLock);
       }
 
-      final fetchPool = Pool(Platform.numberOfProcessors * 4);
+      final fetchPool = Pool(knotHttpConcurrency);
       final linkSpecs = <LinkSpec>[];
       final lockPackages = <String, LockedPackage>{};
       final SignatureVerifier? signatureVerifier =
@@ -1068,7 +1066,7 @@ class InstallOperation {
     final lifecycleWarnings = <String>[];
 
     // Fetch any missing tarballs in parallel; ingest into the store.
-    final fetchPool = Pool(Platform.numberOfProcessors * 4);
+    final fetchPool = Pool(knotHttpConcurrency);
     final futures = <Future<void>>[];
     try {
       for (final entry in lockfile.packages.values) {
@@ -1154,7 +1152,7 @@ class InstallOperation {
     ];
     final fallbackData = <String, PackageJson?>{};
     if (manifestFallback.isNotEmpty) {
-      final readPool = Pool(Platform.numberOfProcessors * 2);
+      final readPool = Pool(knotFileReadConcurrency);
       try {
         await Future.wait([
           for (final entry in manifestFallback)
