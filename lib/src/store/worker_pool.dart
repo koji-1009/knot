@@ -13,10 +13,9 @@ import 'impl.dart';
 /// install: tarball ingest (gzip + tar + sha512) and hardlink batches.
 ///
 /// Why a single pool?
-/// - Earlier drafts kept two pools, one per concern. Each install paid the
-///   ~200 ms isolate-spawn cost twice. They never run concurrently in
-///   practice (ingest happens during fetch phase, link happens after) so
-///   one pool sized to `numberOfProcessors` is enough.
+/// - Earlier drafts kept two pools, one per concern. They never run
+///   concurrently in practice (ingest happens during fetch phase, link
+///   happens after) so one pool sized to `numberOfProcessors` is enough.
 /// - Mixing `package:pool` (concurrency limiter inside main isolate) with
 ///   FFI work confused two distinct concerns. Pool throttles awaitables;
 ///   it doesn't unblock the isolate thread that FFI sits on. This pool
@@ -34,10 +33,8 @@ class WorkerPool {
     required String storeRoot,
     required int size,
   }) async {
-    // Spawn all isolates in parallel. The serial `for (await spawn)` form
-    // multiplied isolate-creation latency by `size` — measured ~200 ms on
-    // an 8-core macOS box. Parallel spawn keeps it to one isolate's
-    // worth of latency.
+    // Spawn all isolates in parallel so the wall time is one isolate's
+    // worth, not `size` isolates' worth.
     final workers = await Future.wait([
       for (var i = 0; i < size; i++) _Worker.spawn(storeRoot),
     ]);

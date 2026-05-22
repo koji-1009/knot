@@ -1,0 +1,14 @@
+name: knot_spawn_bench
+description: >-
+  Microbench for `WorkerPool.spawn` cost. See `bin/spawn_bench.dart`.
+  Not user-facing; lives in its own package so the main knot pubspec
+  stays focused on the CLI app (mirrors `tools/aot_smoke`).
+publish_to: none
+version: 0.0.0
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  knot:
+    path: ../..
