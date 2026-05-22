@@ -21,14 +21,6 @@ import 'impl.dart';
 ///   it doesn't unblock the isolate thread that FFI sits on. This pool
 ///   handles the actual parallelism; the main isolate keeps `package:pool`
 ///   only for HTTP request count limiting.
-///
-/// Spawn cost: parallel `Isolate.spawn` of `numberOfProcessors` workers
-/// measures **median 0.6 ms (max 2.1 ms) over 20 runs on Dart 3.12 /
-/// macOS arm64 M2** — see `tools/spawn_bench/`. Earlier drafts of this
-/// docstring claimed `~200 ms`; that figure was anecdotal and is not
-/// reproducible against the current implementation. The dominant cold-
-/// install costs are HTTP-bound (packument + tarball fetch), not isolate
-/// spawn.
 class WorkerPool {
   WorkerPool._(this._workers);
 
@@ -41,9 +33,8 @@ class WorkerPool {
     required String storeRoot,
     required int size,
   }) async {
-    // Spawn all isolates in parallel. The serial `for (await spawn)` form
-    // pays each spawn's latency in sequence; the parallel form completes
-    // in one isolate's worth of wall time (see class docstring).
+    // Spawn all isolates in parallel so the wall time is one isolate's
+    // worth, not `size` isolates' worth.
     final workers = await Future.wait([
       for (var i = 0; i < size; i++) _Worker.spawn(storeRoot),
     ]);
