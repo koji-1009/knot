@@ -6,6 +6,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:knot/src/ffi/ffi.dart';
+import 'package:knot/src/registry/packument.dart';
 import 'package:path/path.dart' as p;
 
 import 'impl.dart';
@@ -56,10 +57,10 @@ class WorkerPool {
     }
   }
 
-  /// utf8 + JSON decode of a packument response body on a worker.
-  /// Caller wraps the returned map with `Packument.fromJson` on the
-  /// main isolate.
-  Future<Map<String, dynamic>> decodePackument(Uint8List bytes) async {
+  /// utf8 + JSON decode of a packument response body and construct
+  /// the [Packument] all on the worker. The whole parse cost (utf8 +
+  /// JSON + `Packument.fromJson`) stays off the main isolate.
+  Future<Packument> decodePackument(Uint8List bytes) async {
     final w = await _acquire();
     try {
       return await w.decodePackument(bytes);
@@ -72,7 +73,7 @@ class WorkerPool {
   /// worker. Lets the caller skip `autoUncompress` on its HttpClient
   /// and ship the compressed bytes (smaller payload across the isolate
   /// boundary) without paying the gzip cost on the main isolate.
-  Future<Map<String, dynamic>> decodePackumentGzipped(Uint8List bytes) async {
+  Future<Packument> decodePackumentGzipped(Uint8List bytes) async {
     final w = await _acquire();
     try {
       return await w.decodePackumentGzipped(bytes);
@@ -300,7 +301,7 @@ class _Worker {
     }
   }
 
-  Future<Map<String, dynamic>> decodePackument(Uint8List bytes) async {
+  Future<Packument> decodePackument(Uint8List bytes) async {
     final response = await _send(
       (sendPort) => _DecodePackumentMsg(
         TransferableTypedData.fromList([bytes]),
@@ -310,10 +311,10 @@ class _Worker {
     if (response is _Err) {
       throw StateError('worker decodePackument failed: ${response.message}');
     }
-    return response as Map<String, dynamic>;
+    return response as Packument;
   }
 
-  Future<Map<String, dynamic>> decodePackumentGzipped(Uint8List bytes) async {
+  Future<Packument> decodePackumentGzipped(Uint8List bytes) async {
     final response = await _send(
       (sendPort) => _DecodePackumentGzippedMsg(
         TransferableTypedData.fromList([bytes]),
@@ -325,7 +326,7 @@ class _Worker {
         'worker decodePackumentGzipped failed: ${response.message}',
       );
     }
-    return response as Map<String, dynamic>;
+    return response as Packument;
   }
 
   void close() {
@@ -443,7 +444,8 @@ Future<void> _workerMain(SendPort bootReply) async {
             m.replyTo.send(_Err('packument is not a JSON object'));
             break;
           }
-          m.replyTo.send(Map<String, dynamic>.from(decoded));
+          final pkg = Packument.fromJson(Map<String, dynamic>.from(decoded));
+          m.replyTo.send(pkg);
         } on Object catch (e) {
           m.replyTo.send(_Err('$e'));
         }
@@ -456,7 +458,8 @@ Future<void> _workerMain(SendPort bootReply) async {
             m.replyTo.send(_Err('packument is not a JSON object'));
             break;
           }
-          m.replyTo.send(Map<String, dynamic>.from(decoded));
+          final pkg = Packument.fromJson(Map<String, dynamic>.from(decoded));
+          m.replyTo.send(pkg);
         } on Object catch (e) {
           m.replyTo.send(_Err('$e'));
         }
