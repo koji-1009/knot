@@ -160,8 +160,8 @@ class RegistryPackageProvider implements PackageProvider {
       if (releaseAge.strict || immature.isEmpty) {
         throw NetworkError(
           '$package: every version is younger than '
-          '${minReleaseAge!.inHours}h (minimum-release-age filter '
-          'hid $hiddenByAge candidates)',
+          '${minReleaseAge!.inMinutes} minutes (minimum-release-age '
+          'filter hid $hiddenByAge candidates)',
         );
       }
       // Non-strict + at least one immature candidate: fall back to the
