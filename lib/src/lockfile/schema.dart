@@ -8,17 +8,11 @@ class Lockfile {
     required Map<String, Importer> importers,
     required Map<String, LockedPackage> packages,
   }) : importers = Map.unmodifiable(importers),
-       packages = Map.unmodifiable(packages),
-       snapshots = Map.unmodifiable({
-         for (final entry in packages.entries)
-           if (entry.value.integrity != null)
-             entry.value.integrity!: entry.value,
-       });
+       packages = Map.unmodifiable(packages);
 
   final int lockfileVersion;
   final Map<String, Importer> importers;
   final Map<String, LockedPackage> packages;
-  final Map<String, LockedPackage> snapshots;
 }
 
 /// Direct dependency selectors declared by a workspace member.
