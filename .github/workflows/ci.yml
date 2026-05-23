@@ -48,6 +48,8 @@ jobs:
           echo "::endgroup::"
           du -sh "$bundle"
       - run: dart test
+        env:
+          KNOT_NETWORK: '1'
 
   aot-smoke:
     needs: analyze
