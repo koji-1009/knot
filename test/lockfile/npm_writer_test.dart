@@ -205,20 +205,39 @@ void main() {
       expect(File(p.join(root, 'package-lock.json')).existsSync(), isTrue);
     });
 
-    test('ignores pnpm-lock.yaml entirely — writes package-lock.json as if '
-        'the repo had no lockfile, leaves the pnpm file untouched', () async {
+    test('pnpm-mode (pnpm-lock.yaml present) writes pnpm-lock.yaml and '
+        'leaves no package-lock.json', () async {
       await d.dir('proj', [
         d.file('pnpm-lock.yaml', "lockfileVersion: '9.0'\nimporters: {}\n"),
       ]).create();
       final root = p.join(d.sandbox, 'proj');
       final written = await writeProjectLockfile(
         projectRoot: root,
-        lockfile: _fixture(),
+        lockfile: _fixture(
+          packages: {
+            'react@18.3.1': const LockedPackage(
+              name: 'react',
+              version: '18.3.1',
+              resolution: Resolution.tarball(tarball: 'https://x/react.tgz'),
+              integrity: 'sha512-r',
+            ),
+          },
+        ),
         projectName: 'demo',
       );
-      expect(written.path, p.join(root, 'package-lock.json'));
-      expect(File(p.join(root, 'pnpm-lock.yaml')).existsSync(), isTrue);
-      expect(File(p.join(root, 'package-lock.json')).existsSync(), isTrue);
+      expect(written.path, p.join(root, 'pnpm-lock.yaml'));
+      expect(File(p.join(root, 'package-lock.json')).existsSync(), isFalse);
+
+      // The emitted pnpm-lock.yaml round-trips: the declared `^18` range
+      // resolves to the installed 18.3.1, integrity is preserved.
+      final reparsed = parsePnpmLockfile(
+        File(p.join(root, 'pnpm-lock.yaml')).readAsStringSync(),
+      );
+      expect(reparsed.importers['.']!.dependencies['react']!.version, '18.3.1');
+      expect(
+        reparsed.packages['react@18.3.1']!.resolution['integrity'],
+        'sha512-r',
+      );
     });
   });
 }

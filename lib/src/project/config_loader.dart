@@ -8,14 +8,9 @@ import 'mode.dart';
 /// `pnpm-workspace.yaml` + auth-only `.npmrc`) so callers can ask for
 /// config without knowing which mode the project is in.
 class ProjectConfig {
-  ProjectConfig({
-    required this.mode,
-    required this.projectRoot,
-    required this.npmrc,
-  });
+  ProjectConfig({required this.mode, required this.npmrc});
 
   final ProjectMode mode;
-  final String projectRoot;
 
   /// In `npm`/`knot` mode, this carries the project's full `.npmrc`
   /// (policy + auth). In `pnpm` mode, only auth keys survive — policy
@@ -47,7 +42,7 @@ Future<ProjectConfig> loadProjectConfig({
   final scopedNpmrc = mode == ProjectMode.pnpm
       ? NpmrcConfig(_keepAuthOnly(full.raw))
       : full;
-  return ProjectConfig(mode: mode, projectRoot: root, npmrc: scopedNpmrc);
+  return ProjectConfig(mode: mode, npmrc: scopedNpmrc);
 }
 
 Map<String, String> _keepAuthOnly(Map<String, String> entries) {

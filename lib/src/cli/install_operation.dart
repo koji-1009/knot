@@ -186,7 +186,8 @@ class InstallOperation {
     // below) — the workspace-state fingerprint (sha256) and the JSON
     // decode both run off the same buffer.
     final engineKey = _engineKeyFor(pkg);
-    final lockfilePath = p.join(projectRoot, 'package-lock.json');
+    final mode = project.detectProjectMode(projectRoot);
+    final lockfilePath = p.join(projectRoot, projectLockfileName(mode));
     final lockfileFile = File(lockfilePath);
     final Uint8List? lockfileBytes = await lockfileFile.exists()
         ? await lockfileFile.readAsBytes()
@@ -263,7 +264,12 @@ class InstallOperation {
       // Returns null when the repo has none yet.
       final existingLock = lockfileBytes == null
           ? null
-          : importNpmLockfileFromBytes(lockfileBytes, path: lockfilePath);
+          : parseProjectLockfile(
+              lockfileBytes,
+              path: lockfilePath,
+              mode: mode,
+              registry: Uri.parse(npmrc.registry),
+            );
       mark('read lockfile');
 
       // Fast path: if the lockfile is fully consistent with package.json
@@ -441,7 +447,7 @@ class InstallOperation {
       );
 
       if (options.frozenLockfile && existingLock != null) {
-        _verifyFrozen(solution, existingLock);
+        _verifyFrozen(solution, existingLock, projectLockfileName(mode));
       }
 
       final fetchPool = Pool(knotHttpConcurrency);
@@ -686,6 +692,7 @@ class InstallOperation {
         lockfile: lockfile,
         projectName: pkg.name,
         projectVersion: pkg.version,
+        mode: mode,
       );
 
       await _runPostInstallAudit(
@@ -1509,7 +1516,7 @@ class InstallOperation {
     return osOk && cpuOk && libcOk;
   }
 
-  void _verifyFrozen(SolverResult result, Lockfile lock) {
+  void _verifyFrozen(SolverResult result, Lockfile lock, String lockfileName) {
     final mismatches = <String>[];
     for (final entry in result.assignments.entries) {
       final id = '${entry.key}@${entry.value}';
@@ -1518,7 +1525,7 @@ class InstallOperation {
     if (mismatches.isNotEmpty) {
       throw UsageError(
         '--frozen-lockfile requested but resolution diverges from '
-        'package-lock.json (${mismatches.length} new entries)',
+        '$lockfileName (${mismatches.length} new entries)',
       );
     }
   }

@@ -69,11 +69,6 @@ class CatalogSet {
 
   final Map<String, Map<String, String>> tables;
 
-  static final CatalogSet empty = CatalogSet({});
-
-  /// All known catalog names (including `default` if present).
-  Iterable<String> get names => tables.keys;
-
   /// Lookup [packageName] in [catalogName]. Returns null on miss.
   String? lookup({
     String catalogName = defaultCatalogName,
