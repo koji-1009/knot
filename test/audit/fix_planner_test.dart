@@ -1,12 +1,13 @@
 import 'dart:convert';
+import 'dart:io';
 
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart' as http_testing;
 import 'package:knot/src/audit/audit.dart';
 import 'package:knot/src/lockfile/lockfile.dart';
 import 'package:knot/src/npmrc/npmrc.dart';
 import 'package:knot/src/registry/registry.dart';
 import 'package:test/test.dart';
+
+import '../_support/loopback.dart';
 
 Lockfile _lock(Map<String, String> nameToVersion, {Set<String>? topLevel}) {
   topLevel ??= nameToVersion.keys.toSet();
@@ -55,18 +56,21 @@ AuditFinding _finding({
 }
 
 void main() {
-  late http.Client mockClient;
+  late HttpServer fakeServer;
   late RegistryClient client;
   late AuditFixPlanner planner;
 
-  void mockPackuments(Map<String, List<String>> nameToVersions) {
-    mockClient = http_testing.MockClient((req) async {
-      final name = Uri.decodeComponent(req.url.pathSegments.last);
+  Future<void> setUpPackuments(Map<String, List<String>> nameToVersions) async {
+    final fake = await startLoopback((req) async {
+      final name = Uri.decodeComponent(req.uri.pathSegments.last);
       final versions = nameToVersions[name];
       if (versions == null) {
-        return http.Response('{}', 404);
+        req.response.statusCode = 404;
+        req.response.write('{}');
+        return;
       }
-      return http.Response(
+      req.response.statusCode = 200;
+      req.response.write(
         jsonEncode({
           'name': name,
           'dist-tags': const <String, dynamic>{},
@@ -82,159 +86,184 @@ void main() {
               },
           },
         }),
-        200,
       );
     });
-    client = RegistryClient(config: const NpmrcConfig({}), client: mockClient);
+    fakeServer = fake.server;
+    client = RegistryClient(
+      config: NpmrcConfig({'registry': fake.uri.toString()}),
+    );
     planner = AuditFixPlanner(client: client);
+  }
+
+  Future<void> tearDownClient() async {
+    client.close();
+    await fakeServer.close(force: true);
   }
 
   group('AuditFixPlanner', () {
     test('proposes the minimum patched version for a top-level dep', () async {
-      mockPackuments({
+      await setUpPackuments({
         'lodash': ['4.17.0', '4.17.10', '4.17.21', '4.17.22'],
       });
-      final plan = await planner.plan(
-        report: _report([
-          _finding(
-            name: 'lodash',
-            version: '4.17.0',
-            severity: 'high',
-            patched: '>=4.17.21',
-          ),
-        ]),
-        lockfile: _lock({'lodash': '4.17.0'}),
-      );
-      expect(plan.fixes, hasLength(1));
-      expect(plan.fixes.first.fromVersion, '4.17.0');
-      expect(plan.fixes.first.toVersion, '4.17.21');
-      expect(plan.unfixable, isEmpty);
-      client.close();
-    });
-
-    test('reports unfixable when patched_versions is null', () async {
-      mockPackuments({
-        'lodash': ['4.17.0', '4.17.21'],
-      });
-      final plan = await planner.plan(
-        report: _report([
-          _finding(
-            name: 'lodash',
-            version: '4.17.0',
-            severity: 'high',
-            // patched left null
-          ),
-        ]),
-        lockfile: _lock({'lodash': '4.17.0'}),
-      );
-      expect(plan.fixes, isEmpty);
-      expect(plan.unfixable, hasLength(1));
-      expect(plan.unfixable.first.reason, contains('no patched_versions'));
-      client.close();
-    });
-
-    test(
-      'reports transitive deps as unfixable (planner refuses to solve)',
-      () async {
-        mockPackuments({
-          'inner': ['1.0.0', '1.0.1'],
-        });
-        // `inner` is in the lockfile but NOT in the importer's
-        // dependencies — it's a transitive dep.
-        final plan = await planner.plan(
-          report: _report([
-            _finding(
-              name: 'inner',
-              version: '1.0.0',
-              severity: 'high',
-              patched: '>=1.0.1',
-            ),
-          ]),
-          lockfile: _lock(
-            {'inner': '1.0.0', 'outer': '2.0.0'},
-            topLevel: {'outer'}, // inner is transitive
-          ),
-        );
-        expect(plan.fixes, isEmpty);
-        expect(plan.unfixable, hasLength(1));
-        expect(plan.unfixable.first.reason, contains('transitive'));
-        client.close();
-      },
-    );
-
-    test('skips when locked version already in patched range', () async {
-      mockPackuments({
-        'lodash': ['4.17.21', '4.17.22'],
-      });
-      final plan = await planner.plan(
-        report: _report([
-          _finding(
-            name: 'lodash',
-            version: '4.17.21',
-            severity: 'high',
-            patched: '>=4.17.21',
-          ),
-        ]),
-        lockfile: _lock({'lodash': '4.17.21'}),
-      );
-      // Min satisfying patched is 4.17.21 which equals installed.
-      expect(plan.fixes, isEmpty);
-      expect(plan.unfixable, isEmpty);
-      client.close();
-    });
-
-    test(
-      'reports unfixable when patched_versions has no published version',
-      () async {
-        mockPackuments({
-          'lodash': ['4.17.0', '4.17.20'],
-        });
+      try {
         final plan = await planner.plan(
           report: _report([
             _finding(
               name: 'lodash',
               version: '4.17.0',
               severity: 'high',
-              patched: '>=5.0.0',
+              patched: '>=4.17.21',
+            ),
+          ]),
+          lockfile: _lock({'lodash': '4.17.0'}),
+        );
+        expect(plan.fixes, hasLength(1));
+        expect(plan.fixes.first.fromVersion, '4.17.0');
+        expect(plan.fixes.first.toVersion, '4.17.21');
+        expect(plan.unfixable, isEmpty);
+      } finally {
+        await tearDownClient();
+      }
+    });
+
+    test('reports unfixable when patched_versions is null', () async {
+      await setUpPackuments({
+        'lodash': ['4.17.0', '4.17.21'],
+      });
+      try {
+        final plan = await planner.plan(
+          report: _report([
+            _finding(
+              name: 'lodash',
+              version: '4.17.0',
+              severity: 'high',
+              // patched left null
             ),
           ]),
           lockfile: _lock({'lodash': '4.17.0'}),
         );
         expect(plan.fixes, isEmpty);
         expect(plan.unfixable, hasLength(1));
-        expect(
-          plan.unfixable.first.reason,
-          contains('no published version satisfies'),
+        expect(plan.unfixable.first.reason, contains('no patched_versions'));
+      } finally {
+        await tearDownClient();
+      }
+    });
+
+    test(
+      'reports transitive deps as unfixable (planner refuses to solve)',
+      () async {
+        await setUpPackuments({
+          'inner': ['1.0.0', '1.0.1'],
+        });
+        try {
+          // `inner` is in the lockfile but NOT in the importer's
+          // dependencies — it's a transitive dep.
+          final plan = await planner.plan(
+            report: _report([
+              _finding(
+                name: 'inner',
+                version: '1.0.0',
+                severity: 'high',
+                patched: '>=1.0.1',
+              ),
+            ]),
+            lockfile: _lock(
+              {'inner': '1.0.0', 'outer': '2.0.0'},
+              topLevel: {'outer'}, // inner is transitive
+            ),
+          );
+          expect(plan.fixes, isEmpty);
+          expect(plan.unfixable, hasLength(1));
+          expect(plan.unfixable.first.reason, contains('transitive'));
+        } finally {
+          await tearDownClient();
+        }
+      },
+    );
+
+    test('skips when locked version already in patched range', () async {
+      await setUpPackuments({
+        'lodash': ['4.17.21', '4.17.22'],
+      });
+      try {
+        final plan = await planner.plan(
+          report: _report([
+            _finding(
+              name: 'lodash',
+              version: '4.17.21',
+              severity: 'high',
+              patched: '>=4.17.21',
+            ),
+          ]),
+          lockfile: _lock({'lodash': '4.17.21'}),
         );
-        client.close();
+        // Min satisfying patched is 4.17.21 which equals installed.
+        expect(plan.fixes, isEmpty);
+        expect(plan.unfixable, isEmpty);
+      } finally {
+        await tearDownClient();
+      }
+    });
+
+    test(
+      'reports unfixable when patched_versions has no published version',
+      () async {
+        await setUpPackuments({
+          'lodash': ['4.17.0', '4.17.20'],
+        });
+        try {
+          final plan = await planner.plan(
+            report: _report([
+              _finding(
+                name: 'lodash',
+                version: '4.17.0',
+                severity: 'high',
+                patched: '>=5.0.0',
+              ),
+            ]),
+            lockfile: _lock({'lodash': '4.17.0'}),
+          );
+          expect(plan.fixes, isEmpty);
+          expect(plan.unfixable, hasLength(1));
+          expect(
+            plan.unfixable.first.reason,
+            contains('no published version satisfies'),
+          );
+        } finally {
+          await tearDownClient();
+        }
       },
     );
 
     test('dedupes findings sharing (package, advisory.id)', () async {
-      mockPackuments({
+      await setUpPackuments({
         'pkg': ['1.0.0', '1.0.1'],
       });
-      final plan = await planner.plan(
-        report: _report([
-          _finding(
-            name: 'pkg',
-            version: '1.0.0',
-            severity: 'high',
-            patched: '>=1.0.1',
-            id: 'GHSA-dup',
-          ),
-          _finding(
-            name: 'pkg',
-            version: '1.0.0',
-            severity: 'high',
-            patched: '>=1.0.1',
-            id: 'GHSA-dup',
-          ),
-        ]),
-        lockfile: _lock({'pkg': '1.0.0'}),
-      );
-      expect(plan.fixes, hasLength(1));
-      client.close();
+      try {
+        final plan = await planner.plan(
+          report: _report([
+            _finding(
+              name: 'pkg',
+              version: '1.0.0',
+              severity: 'high',
+              patched: '>=1.0.1',
+              id: 'GHSA-dup',
+            ),
+            _finding(
+              name: 'pkg',
+              version: '1.0.0',
+              severity: 'high',
+              patched: '>=1.0.1',
+              id: 'GHSA-dup',
+            ),
+          ]),
+          lockfile: _lock({'pkg': '1.0.0'}),
+        );
+        expect(plan.fixes, hasLength(1));
+      } finally {
+        await tearDownClient();
+      }
     });
   });
 }

@@ -2,12 +2,12 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:boringssl_dart/boringssl_dart.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart' as http_testing;
 import 'package:knot/src/core/core.dart';
 import 'package:knot/src/registry/registry.dart';
 import 'package:knot/src/signature/signature.dart';
 import 'package:test/test.dart';
+
+import '../_support/loopback.dart';
 
 /// Sign `message` with `key` then re-encode the raw signature as DER
 /// so we get the exact byte shape the npm registry advertises.
@@ -76,8 +76,9 @@ void main() {
       final derSig = _signAsDer(key, Uint8List.fromList(message));
       final spki = _spkiP256(key);
 
-      final mockHttp = http_testing.MockClient((req) async {
-        return http.Response(
+      final fake = await startLoopback((req) async {
+        req.response.statusCode = 200;
+        req.response.write(
           jsonEncode({
             'keys': [
               {
@@ -87,24 +88,25 @@ void main() {
               },
             ],
           }),
-          200,
         );
       });
-      final keyStore = RegistryKeyStore(
-        client: mockHttp,
-        registry: Uri.parse('https://registry.test/'),
-      );
+      final keyStore = RegistryKeyStore(registry: fake.uri);
       final verifier = SignatureVerifier(keyStoreFor: (_) => keyStore);
 
-      final check = await verifier.verify(
-        name: name,
-        version: version,
-        integrity: integrity,
-        signatures: [
-          DistSignature(keyid: 'SHA256:test-key', sig: base64.encode(derSig)),
-        ],
-      );
-      expect(check.outcome, SignatureOutcome.verified);
+      try {
+        final check = await verifier.verify(
+          name: name,
+          version: version,
+          integrity: integrity,
+          signatures: [
+            DistSignature(keyid: 'SHA256:test-key', sig: base64.encode(derSig)),
+          ],
+        );
+        expect(check.outcome, SignatureOutcome.verified);
+      } finally {
+        keyStore.close();
+        await fake.server.close(force: true);
+      }
     });
 
     test('failed: wrong message body fails verification', () async {
@@ -113,8 +115,9 @@ void main() {
       final derSig = _signAsDer(key, Uint8List.fromList(message));
       final spki = _spkiP256(key);
 
-      final mockHttp = http_testing.MockClient((req) async {
-        return http.Response(
+      final fake = await startLoopback((req) async {
+        req.response.statusCode = 200;
+        req.response.write(
           jsonEncode({
             'keys': [
               {
@@ -124,48 +127,49 @@ void main() {
               },
             ],
           }),
-          200,
         );
       });
-      final verifier = SignatureVerifier(
-        keyStoreFor: (_) => RegistryKeyStore(
-          client: mockHttp,
-          registry: Uri.parse('https://registry.test/'),
-        ),
-      );
-      final check = await verifier.verify(
-        name: 'react',
-        version: '18.2.0',
-        integrity: 'sha512-realintegrity', // signed with DIFFERENT
-        signatures: [
-          DistSignature(keyid: 'SHA256:k', sig: base64.encode(derSig)),
-        ],
-      );
-      expect(check.outcome, SignatureOutcome.failed);
-      expect(check.reason, contains('did not verify'));
+      final keyStore = RegistryKeyStore(registry: fake.uri);
+      final verifier = SignatureVerifier(keyStoreFor: (_) => keyStore);
+      try {
+        final check = await verifier.verify(
+          name: 'react',
+          version: '18.2.0',
+          integrity: 'sha512-realintegrity', // signed with DIFFERENT
+          signatures: [
+            DistSignature(keyid: 'SHA256:k', sig: base64.encode(derSig)),
+          ],
+        );
+        expect(check.outcome, SignatureOutcome.failed);
+        expect(check.reason, contains('did not verify'));
+      } finally {
+        keyStore.close();
+        await fake.server.close(force: true);
+      }
     });
 
     test('failed: unknown keyid', () async {
-      final mockHttp = http_testing.MockClient((req) async {
-        return http.Response(
+      final fake = await startLoopback((req) async {
+        req.response.statusCode = 200;
+        req.response.write(
           jsonEncode({'keys': const <Map<String, dynamic>>[]}),
-          200,
         );
       });
-      final verifier = SignatureVerifier(
-        keyStoreFor: (_) => RegistryKeyStore(
-          client: mockHttp,
-          registry: Uri.parse('https://registry.test/'),
-        ),
-      );
-      final check = await verifier.verify(
-        name: 'x',
-        version: '1.0.0',
-        integrity: 'sha512-x',
-        signatures: const [DistSignature(keyid: 'SHA256:nope', sig: 'AAAA')],
-      );
-      expect(check.outcome, SignatureOutcome.failed);
-      expect(check.reason, contains('unknown keyid'));
+      final keyStore = RegistryKeyStore(registry: fake.uri);
+      final verifier = SignatureVerifier(keyStoreFor: (_) => keyStore);
+      try {
+        final check = await verifier.verify(
+          name: 'x',
+          version: '1.0.0',
+          integrity: 'sha512-x',
+          signatures: const [DistSignature(keyid: 'SHA256:nope', sig: 'AAAA')],
+        );
+        expect(check.outcome, SignatureOutcome.failed);
+        expect(check.reason, contains('unknown keyid'));
+      } finally {
+        keyStore.close();
+        await fake.server.close(force: true);
+      }
     });
 
     test('missing: no signatures attached', () async {
