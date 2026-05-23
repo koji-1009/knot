@@ -96,22 +96,21 @@ from Zig to Rust — these numbers belong to **this** set of versions):
 
 | tool | scenario | best      | center             | worst       | peak memory |
 |------|----------|-----------|--------------------|-------------|-------------|
-| **knot** | cold | **1330 ms**  | **1730 ms**           | 9250 ms     | **173 MB**  |
-| **knot** | warm | **53.5 ms**  | **55.0 ± 0.8 ms**     | 55.9 ms     |  **11 MB**  |
-| pnpm | cold | 1380 ms      | 1760 ms               | 4480 ms     | 401 MB      |
-| pnpm | warm | 275.3 ms     | 281.1 ± 2.6 ms        | 287.8 ms    | 263 MB      |
-| npm  | cold | 7290 ms      | 9790 ms               | 21380 ms    | 382 MB      |
-| npm  | warm | 382.1 ms     | 402.5 ± 9.2 ms        | 422.0 ms    | 110 MB      |
-| bun  | cold | **930 ms**   | **1060 ms**           | 1950 ms     | 128 MB      |
-| bun  | warm | **7.9 ms**   | **9.6 ± 5.6 ms**      | 33.1 ms     |   **8 MB**  |
+| **knot** | cold | **1450 ms**  | **1760 ms**           | 7830 ms     | **186 MB**  |
+| **knot** | warm | **52.8 ms**  | **54.0 ± 0.6 ms**     | 55.1 ms     |  **11 MB**  |
+| pnpm | cold | 1360 ms      | 1720 ms               | 3170 ms     | 395 MB      |
+| pnpm | warm | 268.2 ms     | 272.3 ± 2.2 ms        | 278.7 ms    | 263 MB      |
+| npm  | cold | 6150 ms      | 7310 ms               | 9210 ms     | 377 MB      |
+| npm  | warm | 388.9 ms     | 423.6 ± 62.6 ms       | 666.1 ms    | 104 MB      |
+| bun  | cold | **940 ms**   | **1710 ms**           | 5950 ms     | 134 MB      |
+| bun  | warm | **7.6 ms**   | **7.9 ± 0.3 ms**      | 8.9 ms      |   **8 MB**  |
 
 - `best` = min over N runs (the floor when the network and host
   cooperate — useful for "how fast can this go").
 - `center` = median for cold, hyperfine `mean ± σ` for warm.
-- `worst` = max over N runs (the tail; **this session was network-
-  noisy** — npm's cold max blew past 20 s and knot's past 9 s, well
-  above the median; treat the bracket as that session's spread, not
-  a confidence interval).
+- `worst` = max over N runs (the tail; cold can spike to several
+  times the median on a network-noisy session — treat the bracket as
+  that session's spread, not a confidence interval).
 - Cold from `tools/bench/run.sh --cold-runs 15`; warm from
   `hyperfine --warmup 2 --runs 20` with each tool seeded against its
   own lockfile.
