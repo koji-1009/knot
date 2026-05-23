@@ -45,8 +45,8 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: HEAD
-      resolved-ref: "6b07d67141d916324e99b962d8c345dd862be0f6"
+      ref: "13dd4642a5c3d74f396633594e6d39f530a2b767"
+      resolved-ref: "13dd4642a5c3d74f396633594e6d39f530a2b767"
       url: "https://github.com/koji-1009/boringssl_dart"
     source: git
     version: "1.0.0"

@@ -17,9 +17,10 @@ Future<TestProcess> _runKnot(
 }
 
 void main() {
-  test('--version prints the version literal and exits 0', () async {
+  test('--version prints the version + BoringSSL commit and exits 0', () async {
     final process = await _runKnot(['--version']);
     await expectLater(process.stdout, emitsThrough('0.0.1-dev'));
+    await expectLater(process.stdout, emitsThrough(startsWith('BoringSSL ')));
     await process.shouldExit(0);
   });
 

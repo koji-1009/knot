@@ -1,5 +1,6 @@
 import 'package:args/args.dart';
 import 'package:args/command_runner.dart';
+import 'package:boringssl_dart/boringssl_dart.dart' show boringsslCommit;
 import 'package:knot/src/core/core.dart';
 
 import 'commands/add_command.dart';
@@ -33,7 +34,9 @@ class KnotCommandRunner extends CommandRunner<int> {
       ..addFlag(
         'version',
         negatable: false,
-        help: 'Print the knot version and exit.',
+        help:
+            'Print the knot version and the Git commit of the BoringSSL '
+            'this binary is built against, then exit.',
       )
       ..addFlag(
         'silent',
@@ -87,6 +90,7 @@ class KnotCommandRunner extends CommandRunner<int> {
     final parsed = parse(args);
     if (parsed['version'] as bool) {
       print(knotVersion);
+      print('BoringSSL $boringsslCommit');
       return 0;
     }
     final level = _resolveLevel(parsed);
