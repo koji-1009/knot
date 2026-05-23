@@ -78,9 +78,9 @@ macOS and Linux are supported (`/usr/bin/time -lp` / `-v`); Windows is not.
 
 ### Reference run
 
-Sample numbers from one author run on **macOS arm64 (M2)**, fixture
-`vite-react` (16 packages: react + react-dom + vite with its transitive
-deps), measured 2026-05-23.
+Sample numbers from one author run on **macOS arm64 (MacBook Air M4,
+10 cores)**, fixture `vite-react` (16 packages: react + react-dom +
+vite with its transitive deps), measured 2026-05-23.
 
 Pinned versions (everything below is sensitive to the package manager's
 implementation language and release, especially while bun is mid-migration
@@ -124,15 +124,19 @@ picture — bun's Zig→Rust migration in particular is in flux.
 `dart build cli` produces a self-contained bundle under `build/bundle/`:
 
 ```
-7.9M  bundle/bin/knot
+8.2M  bundle/bin/knot
 505K  bundle/lib/libboringssl_dart.dylib
 ----
-8.4M  total
+8.7M  total
 ```
 
 (macOS arm64. Linux / Windows are within 10% of these numbers.) For
-comparison, a typical `node_modules/pnpm/` install on Linux x64 is ~30 MB;
-`bun`'s standalone binary is ~70 MB.
+comparison, npm requires Node.js (~60 MB) plus its own ~30 MB of
+JS modules; `pnpm`'s standalone build bundles a Node runtime and
+sits around 50 MB; `bun`'s standalone binary is ~70 MB. knot ships
+no JavaScript runtime — `dart build cli` produces the AOT binary
+plus a 505 KiB BoringSSL dylib (ECDSA + SHA-512 only, the rest of
+the upstream library is stripped at link time).
 
 ## License
 
