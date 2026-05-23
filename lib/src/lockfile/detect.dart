@@ -1,54 +1,111 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import '../npmrc/npmrc.dart' show defaultRegistry;
+import '../project/mode.dart';
 import 'npm_writer.dart' as npm;
+import 'pnpm_convert.dart';
+import 'pnpm_reader.dart';
+import 'pnpm_writer.dart' as pnpm;
 import 'reader.dart';
 import 'schema.dart';
 
-/// Lockfile path inside a project root. knot operates on
-/// `package-lock.json` exclusively — the npm v3 shape covers the
-/// information knot needs and gives universal interop with the rest
-/// of the JavaScript ecosystem.
+/// Path to a project's on-disk lockfile. The format is chosen by the
+/// project mode: pnpm-mode uses `pnpm-lock.yaml`; npm/knot-mode use
+/// `package-lock.json` (the npm v3 shape knot's resolver targets).
 class DetectedLockfile {
   DetectedLockfile({required this.path});
   final String path;
 }
 
-/// Return the `package-lock.json` path under [projectRoot] when one
+/// On-disk lockfile filename for [mode].
+String projectLockfileName(ProjectMode mode) =>
+    mode == ProjectMode.pnpm ? 'pnpm-lock.yaml' : 'package-lock.json';
+
+/// Return the existing project lockfile (format chosen by mode) when one
 /// is present. Returns null on miss; callers fall back to writing a
 /// fresh lockfile on the first install.
 DetectedLockfile? detectExistingLockfile(String projectRoot) {
-  final path = p.join(projectRoot, 'package-lock.json');
+  final path = p.join(
+    projectRoot,
+    projectLockfileName(detectProjectMode(projectRoot)),
+  );
   if (File(path).existsSync()) {
     return DetectedLockfile(path: path);
   }
   return null;
 }
 
-/// Read the project's `package-lock.json`, if present.
-Future<Lockfile?> readProjectLockfile(String projectRoot) async {
-  final detected = detectExistingLockfile(projectRoot);
-  if (detected == null) return null;
-  return importNpmLockfile(detected.path);
+/// Parse already-read lockfile [bytes] into the internal [Lockfile],
+/// dispatching on [mode].
+///
+/// pnpm bodies are converted through [pnpmToLockfile]; that path needs
+/// [registry] to rebuild the tarball URL pnpm leaves implicit for
+/// registry packages (the integrity hash is the real guarantee).
+Lockfile parseProjectLockfile(
+  Uint8List bytes, {
+  required String path,
+  required ProjectMode mode,
+  required Uri registry,
+}) {
+  if (mode == ProjectMode.pnpm) {
+    return pnpmToLockfile(
+      parsePnpmLockfile(utf8.decode(bytes)),
+      registry: registry,
+    );
+  }
+  return importNpmLockfileFromBytes(bytes, path: path);
 }
 
-/// Write [lockfile] to `<projectRoot>/package-lock.json`.
+/// Read the project's lockfile (format chosen by mode), if present.
 ///
-/// [projectName] / [projectVersion] are required for the npm shape;
-/// pass `package.json`'s `name`/`version`.
+/// [registry] is consulted only in pnpm-mode for tarball-URL
+/// reconstruction; inspection commands that never fetch can leave it at
+/// the npm default.
+Future<Lockfile?> readProjectLockfile(
+  String projectRoot, {
+  Uri? registry,
+}) async {
+  final mode = detectProjectMode(projectRoot);
+  final path = p.join(projectRoot, projectLockfileName(mode));
+  final file = File(path);
+  if (!await file.exists()) return null;
+  final bytes = await file.readAsBytes();
+  return parseProjectLockfile(
+    bytes,
+    path: path,
+    mode: mode,
+    registry: registry ?? Uri.parse(defaultRegistry),
+  );
+}
+
+/// Write [lockfile] to the project's lockfile (format chosen by mode).
+///
+/// [projectName] / [projectVersion] populate the npm shape's importer
+/// root; pnpm derives importer specifiers from the lockfile itself, so
+/// they are ignored in pnpm-mode. Pass [mode] to skip re-detection when
+/// the caller already knows it.
 Future<DetectedLockfile> writeProjectLockfile({
   required String projectRoot,
   required Lockfile lockfile,
   required String projectName,
   String? projectVersion,
+  ProjectMode? mode,
 }) async {
-  final path = p.join(projectRoot, 'package-lock.json');
-  await npm.writeNpmLockfileToFile(
-    lockfile,
-    path,
-    projectName: projectName,
-    projectVersion: projectVersion,
-  );
+  final resolved = mode ?? detectProjectMode(projectRoot);
+  final path = p.join(projectRoot, projectLockfileName(resolved));
+  if (resolved == ProjectMode.pnpm) {
+    await pnpm.writePnpmLockfile(path, lockfileToPnpm(lockfile));
+  } else {
+    await npm.writeNpmLockfileToFile(
+      lockfile,
+      path,
+      projectName: projectName,
+      projectVersion: projectVersion,
+    );
+  }
   return DetectedLockfile(path: path);
 }

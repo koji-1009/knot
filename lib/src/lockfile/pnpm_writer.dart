@@ -84,9 +84,13 @@ String writePnpmLockfileString(PnpmLockfile lockfile) {
   return buf.toString();
 }
 
-/// Convenience wrapper for `writePnpmLockfileString` writing to disk.
+/// Atomically write [lockfile] to [path] via a temp file + rename, so a
+/// crash mid-write can't leave the project with a truncated lockfile.
 Future<void> writePnpmLockfile(String path, PnpmLockfile lockfile) async {
-  await File(path).writeAsString(writePnpmLockfileString(lockfile));
+  final tmp = '$path.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}';
+  final file = File(tmp);
+  await file.writeAsString(writePnpmLockfileString(lockfile), flush: true);
+  await file.rename(path);
 }
 
 void _writeImporter(StringBuffer buf, PnpmImporter imp, int indent) {

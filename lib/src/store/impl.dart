@@ -47,16 +47,12 @@ class StoreIntegrityIssue {
     required this.tarballSha512Hex,
     required this.relativePath,
     required this.expectedSha512,
-    required this.actualSha512,
     required this.reason,
   });
 
   final String tarballSha512Hex;
   final String relativePath;
   final String expectedSha512;
-
-  /// Recomputed sha512 (null when the file went missing).
-  final String? actualSha512;
 
   /// Short tag: `missing` or `sha512-mismatch`.
   final String reason;
@@ -67,9 +63,8 @@ class StoreIntegrityIssue {
 
 /// Filesystem-backed content store.
 class Store {
-  Store(this.root) : layout = StoreLayout(root);
+  Store(String root) : layout = StoreLayout(root);
 
-  final String root;
   final StoreLayout layout;
 
   Future<void> initialize() async {
@@ -305,7 +300,6 @@ class Store {
             tarballSha512Hex: tarballSha512Hex,
             relativePath: f.relativePath,
             expectedSha512: f.sha512Hex,
-            actualSha512: null,
             reason: 'missing',
           ),
         );
@@ -322,7 +316,6 @@ class Store {
             tarballSha512Hex: tarballSha512Hex,
             relativePath: f.relativePath,
             expectedSha512: f.sha512Hex,
-            actualSha512: actual,
             reason: 'sha512-mismatch',
           ),
         );
