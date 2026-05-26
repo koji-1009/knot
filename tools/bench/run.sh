@@ -2,8 +2,16 @@
 # Install-time benchmark for knot vs other package managers.
 #
 # Measures cold + warm install time and peak memory for a chosen
-# fixture across knot, pnpm, npm, bun. Cold runs wipe each tool's
-# global cache/store first; warm runs only clear node_modules.
+# fixture across knot, pnpm, npm, bun.
+#
+# Cold is measured INTERLEAVED: each round installs every tool
+# back-to-back, in a shuffled order, each into its own fresh temporary
+# cache (the host's real caches are never touched), so all tools see the
+# same network window. Measuring each tool in its own block instead lets
+# a drifting connection hand whichever block hit the faster window a
+# misleading lead — cold is network-bound. Warm clears only node_modules
+# and reuses the seeded cache (network-independent, so a per-tool block
+# is fine).
 #
 # Defaults are asymmetric on purpose:
 #   - cold = 15 runs.  Network-bound; observed spreads of 5x are
@@ -106,26 +114,24 @@ if [ -z "$knot_bin" ]; then
   knot_bin="$build_dir/bundle/bin/$bin_name"
 fi
 [ -x "$knot_bin" ] || { echo "knot binary not executable: $knot_bin" >&2; exit 1; }
+# Absolutize: install commands run after `cd "$fixture_dir"`, so a relative
+# --knot-bin (e.g. build/bundle/bin/knot) would otherwise fail to resolve.
+case "$knot_bin" in
+  /*) ;;
+  *) knot_bin="$(cd "$(dirname "$knot_bin")" && pwd)/$(basename "$knot_bin")" ;;
+esac
 
 # --- per-tool helpers --------------------------------------------------------
 
-clear_global_cache() {
+# Cold install command pointed at a *fresh, empty* per-tool cache, so the
+# run is genuinely cold without wiping the host's real caches. Each tool
+# takes its cache location differently.
+cold_command() {
   case "$1" in
-    knot)
-      rm -rf "$HOME/.knot/cache" "$HOME/.knot/store"
-      ;;
-    pnpm)
-      rm -rf "$HOME/Library/pnpm/store" \
-             "$HOME/.local/share/pnpm/store" \
-             "$HOME/Library/Caches/pnpm" \
-             "$HOME/.cache/pnpm"
-      ;;
-    npm)
-      rm -rf "$HOME/.npm/_cacache"
-      ;;
-    bun)
-      rm -rf "$HOME/.bun/install/cache"
-      ;;
+    knot) echo "env HOME=$2 $knot_bin install" ;;
+    pnpm) echo "pnpm install --ignore-scripts --store-dir $2" ;;
+    npm)  echo "npm install --ignore-scripts --cache $2" ;;
+    bun)  echo "env BUN_INSTALL_CACHE_DIR=$2 bun install --ignore-scripts" ;;
   esac
 }
 
@@ -147,14 +153,18 @@ tool_command() {
   esac
 }
 
-# Run one install, print "<seconds> <peak_bytes>".
-run_once() {
-  local cmd
-  cmd="$(tool_command "$1")"
+# Run one install (warm, via the tool's standard command), print
+# "<seconds> <peak_bytes>".
+run_once() { run_once_cmd "$1" "$(tool_command "$1")"; }
+
+# Run one install from an explicit command string (used for cold, where
+# the command carries a per-run temp-cache flag). Print "<seconds> <peak_bytes>".
+run_once_cmd() {
+  local label="$1" cmd="$2"
   local stderr_log
   stderr_log="$(mktemp)"
   (cd "$fixture_dir" && /usr/bin/time $time_flag $cmd >/dev/null 2>"$stderr_log") \
-    || { echo "install failed for $1:" >&2; cat "$stderr_log" >&2; rm -f "$stderr_log"; return 1; }
+    || { echo "install failed for $label:" >&2; cat "$stderr_log" >&2; rm -f "$stderr_log"; return 1; }
   local real peak
   real="$(parse_real < "$stderr_log")"
   peak="$(parse_peak < "$stderr_log")"
@@ -190,41 +200,76 @@ format_mb() { awk -v b="$1" 'BEGIN {printf "%.1f MB", b / 1024 / 1024}'; }
 
 # --- main loop ---------------------------------------------------------------
 
-echo "## bench: $fixture (cold N=$cold_runs / warm N=$warm_runs)"
+# Resolve the requested tools to those actually runnable.
+IFS=',' read -ra requested <<< "$tools_csv"
+tool_list=()
+for tool in "${requested[@]}"; do
+  if [ "$tool" = knot ] || command -v "$tool" >/dev/null 2>&1; then
+    tool_list+=("$tool")
+  else
+    echo "skipping $tool (not on PATH)" >&2
+  fi
+done
+
+# Per-tool result files: <tool>.<scenario>.{t,p} = one time / peak per line.
+resdir="$(mktemp -d -t knot-bench-res.XXXXXX)"
+collect() { # collect <tool> <scenario> < "real peak"
+  read -r t p
+  echo "$t" >> "$resdir/$1.$2.t"
+  echo "$p" >> "$resdir/$1.$2.p"
+}
+
+# --- cold: interleaved -------------------------------------------------------
+# Cold is network-bound and the connection drifts over minutes, so measuring
+# each tool in its own block can hand whichever block hit the faster window a
+# misleading lead. Instead, each round installs every tool back-to-back (in a
+# shuffled order) into its own *fresh temp cache* — host caches untouched — so
+# all tools share one network window.
+for _ in $(seq 1 "$cold_runs"); do
+  shuffled="$(printf '%s\n' "${tool_list[@]}" \
+    | awk 'BEGIN{srand()}{print rand()"\t"$0}' | sort -n | cut -f2-)"
+  while IFS= read -r tool; do
+    [ -n "$tool" ] || continue
+    clear_project
+    cache="$(mktemp -d -t knot-bench-cache.XXXXXX)"
+    if out="$(run_once_cmd "$tool" "$(cold_command "$tool" "$cache")")"; then
+      printf '%s\n' "$out" | collect "$tool" cold
+    fi
+    rm -rf "$cache"
+  done <<< "$shuffled"
+done
+
+# --- warm: per-tool block ----------------------------------------------------
+# Warm is network-independent (packument freshness + store hits), so a block
+# per tool is fine. Seed once to establish the lockfile + host cache, then time
+# repeated relinks (node_modules cleared each run, lockfile/cache kept).
+for tool in "${tool_list[@]}"; do
+  clear_project
+  (cd "$fixture_dir" && $(tool_command "$tool") >/dev/null 2>&1 || true)
+  for _ in $(seq 1 "$warm_runs"); do
+    rm -rf "$fixture_dir/node_modules"
+    if out="$(run_once "$tool")"; then
+      printf '%s\n' "$out" | collect "$tool" warm
+    fi
+  done
+done
+
+# --- table -------------------------------------------------------------------
+echo "## bench: $fixture (cold N=$cold_runs interleaved / warm N=$warm_runs)"
 echo
 echo "| tool | scenario | best | median | worst | peak memory |"
 echo "|------|----------|------|--------|-------|-------------|"
-
-IFS=',' read -ra tool_list <<< "$tools_csv"
 for tool in "${tool_list[@]}"; do
-  if ! command -v "$tool" >/dev/null 2>&1 && [ "$tool" != "knot" ]; then
-    echo "| $tool | — | (not on PATH, skipped) | |"
-    continue
-  fi
   for scenario in cold warm; do
-    if [ "$scenario" = "cold" ]; then
-      n="$cold_runs"
-    else
-      n="$warm_runs"
-    fi
-    times=() peaks=()
-    for _ in $(seq 1 "$n"); do
-      clear_project
-      [ "$scenario" = "cold" ] && clear_global_cache "$tool"
-      # warm scenarios need an established lockfile/cache from a
-      # prior run; do a single seed install when needed.
-      if [ "$scenario" = "warm" ] && [ ! -d "$fixture_dir/node_modules" ]; then
-        (cd "$fixture_dir" && $(tool_command "$tool") >/dev/null 2>&1 || true)
-        rm -rf "$fixture_dir/node_modules"
-      fi
-      read -r t p <<< "$(run_once "$tool")"
-      times+=("$t")
-      peaks+=("$p")
-    done
-    median_t=$(printf '%s\n' "${times[@]}" | median)
-    min_t=$(printf '%s\n' "${times[@]}" | min)
-    max_t=$(printf '%s\n' "${times[@]}" | max)
-    median_p=$(printf '%s\n' "${peaks[@]}" | median)
+    tf="$resdir/$tool.$scenario.t"
+    pf="$resdir/$tool.$scenario.p"
+    [ -s "$tf" ] || continue
+    min_t=$(min < "$tf")
+    median_t=$(median < "$tf")
+    max_t=$(max < "$tf")
+    median_p=$(median < "$pf")
     echo "| $tool | $scenario | $(format_ms "$min_t") | $(format_ms "$median_t") | $(format_ms "$max_t") | $(format_mb "$median_p") |"
   done
 done
+
+rm -rf "$resdir"

@@ -47,10 +47,15 @@ runs, because the link hook is not invoked.
 ## Benchmark
 
 `tools/bench/run.sh` measures cold + warm install time and peak memory across
-knot, pnpm, npm, and bun on a chosen fixture. Cold runs wipe each tool's
-global cache/store first; warm runs only clear `node_modules`. Each scenario
-is run N times and the table reports best / median / worst (so the network
-floor and the tail are both visible alongside the typical observation).
+knot, pnpm, npm, and bun on a chosen fixture. Cold is measured *interleaved* —
+each round installs every tool back-to-back in a shuffled order, each into its
+own fresh temporary cache (the host's real caches are left untouched), so all
+tools share one network window (cold is network-bound, and a connection that
+drifts over minutes would otherwise hand whichever tool's block hit the faster
+window a misleading lead). Warm runs only clear `node_modules` and reuse the
+seeded cache, so they stay in a per-tool block. Each scenario is run N times
+and the table reports best / median / worst (so the network floor and the tail
+are both visible alongside the typical observation).
 
 ```
 ./tools/bench/run.sh --fixture vite-react --tools knot,pnpm,npm,bun
