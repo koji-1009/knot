@@ -104,13 +104,13 @@ from Zig to Rust — these numbers belong to **this** set of versions):
 
 | tool | scenario | best      | center             | worst       | peak memory |
 |------|----------|-----------|--------------------|-------------|-------------|
-| **knot** | cold | **680 ms**   | **815 ms**            | 1380 ms     | **133 MB**  |
+| knot | cold | 1180 ms      | 1520 ms               | 5400 ms     | **133 MB**  |
 | **knot** | warm | **14.7 ms**  | **15.6 ± 0.5 ms**     | 16.5 ms     |  **11 MB**  |
-| pnpm | cold | **540 ms**   | **600 ms**            | 1120 ms     | 398 MB      |
+| pnpm | cold | 1380 ms      | 1555 ms               | 7310 ms     | 398 MB      |
 | pnpm | warm | 286.1 ms     | 290.0 ± 2.7 ms        | 294.3 ms    | 264 MB      |
-| npm  | cold | 6810 ms      | 7300 ms               | 8380 ms     | 382 MB      |
+| npm  | cold | 6380 ms      | 8125 ms               | 10860 ms    | 382 MB      |
 | npm  | warm | 398.7 ms     | 419.9 ± 39.6 ms       | 582.0 ms    | 107 MB      |
-| bun  | cold | 910 ms       | 1115 ms               | 2000 ms     | 125 MB      |
+| **bun**  | cold | **720 ms**   | **1090 ms**           | 6810 ms     | 125 MB      |
 | bun  | warm | **8.5 ms**   | **9.2 ± 0.6 ms**      | 10.7 ms     |   **7 MB**  |
 
 - `best` = min over N runs (the floor when the network and host
@@ -119,14 +119,22 @@ from Zig to Rust — these numbers belong to **this** set of versions):
 - `worst` = max over N runs (the tail; cold can spike to several
   times the median on a network-noisy session — treat the bracket as
   that session's spread, not a confidence interval).
-- Cold timing is from **10 interleaved rounds** — each round installs all
-  four tools back-to-back (each with its own fresh temporary cache), so
-  they share the same network window. This matters: cold is network-bound
-  and the connection drifts over minutes, so measuring each tool in a
-  separate block (as `tools/bench/run.sh` does) can hand whichever block
-  hit the faster window a misleading lead. Warm is from `hyperfine
-  --warmup 2 --runs 20` (run.sh's `/usr/bin/time` is too coarse for the
-  sub-100 ms warm tools), each tool seeded against its own lockfile.
+- Cold timing is from **12 interleaved rounds** (`tools/bench/run.sh`) —
+  each round installs all four tools back-to-back, each into its own
+  fresh temporary cache, so they share the same network window. This
+  matters: cold is network-bound and the connection drifts over minutes,
+  so measuring each tool in a separate block can hand whichever block hit
+  the faster window a misleading lead. **A genuinely cold run must clear
+  every cache a tool reads** — for pnpm that means both `--store-dir`
+  (content store) *and* `--config.cacheDir` (packument metadata).
+  Relocating only the store leaves pnpm's metadata cache warm, which made
+  its "cold" install look ~2.5× faster than it really is (≈600 ms vs the
+  ≈1550 ms above); npm's `--cache`, bun's `BUN_INSTALL_CACHE_DIR` and
+  knot's `$HOME/.knot` each already cover metadata + tarballs. Once every
+  tool is truly cold, knot and pnpm are level and bun leads. Warm is from
+  `hyperfine --warmup 2 --runs 20` (run.sh's `/usr/bin/time` is too coarse
+  for the sub-100 ms warm tools), each tool seeded against its own
+  lockfile.
 - Peak memory is `/usr/bin/time -lp`'s `peak memory footprint` (network-
   independent, so it is the same regardless of the cache state).
 - knot's warm relink reads packuments from a binary cache and a
