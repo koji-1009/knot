@@ -126,10 +126,19 @@ esac
 # Cold install command pointed at a *fresh, empty* per-tool cache, so the
 # run is genuinely cold without wiping the host's real caches. Each tool
 # takes its cache location differently.
+#
+# pnpm needs BOTH `--store-dir` (content-addressable store) AND
+# `--config.cacheDir` (packument *metadata* cache). Relocating only the
+# store leaves pnpm's metadata cache (`~/Library/Caches/pnpm` /
+# `~/.cache/pnpm`) warm, so packument requests are served from disk and
+# the "cold" run isn't cold at all — measured ~670 ms (fake) vs
+# ~1400-1800 ms (true) for vite-react. npm's `--cache` and bun's
+# `BUN_INSTALL_CACHE_DIR` each cover metadata + tarballs in one dir, and
+# knot keeps both under `$HOME/.knot`, so those are genuinely cold.
 cold_command() {
   case "$1" in
     knot) echo "env HOME=$2 $knot_bin install" ;;
-    pnpm) echo "pnpm install --ignore-scripts --store-dir $2" ;;
+    pnpm) echo "pnpm install --ignore-scripts --store-dir $2/store --config.cacheDir=$2/cache" ;;
     npm)  echo "npm install --ignore-scripts --cache $2" ;;
     bun)  echo "env BUN_INSTALL_CACHE_DIR=$2 bun install --ignore-scripts" ;;
   esac
