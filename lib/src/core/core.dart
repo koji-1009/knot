@@ -6,3 +6,4 @@ export 'error.dart';
 export 'hash.dart';
 export 'logger.dart';
 export 'progress.dart';
+export 'registry_url.dart';

@@ -1,21 +1,31 @@
 import 'dart:io';
 
-/// Process-wide concurrency budget for knot, sized off the host's
-/// CPU count.
+/// Default budget of in-flight registry requests (packuments + tarballs).
 ///
-/// Tuning rationale:
-/// - **HTTP fetches** are latency-bound. Roughly N tarball downloads
-///   can be in flight per core before CPU starts to limit the rate
-///   at which we can hash + ingest them. 4x matches the install
-///   fetch pool sizing and the `RegistryClient` HttpClient's
-///   `maxConnectionsPerHost`.
-/// - **File reads** are blocking-async. 2x lets the kernel pipeline
-///   reads while one isolate is decoding tar headers.
-/// - **Worker isolates** do CPU-bound JSON / hash work. One per core.
+/// This is a **network** property, not a CPU one, so — unlike the worker
+/// pool and file-read budgets below — it is a fixed constant rather than
+/// derived from the core count. A fetch spends its time waiting on the
+/// registry (RTT) and the shared pipe; how many usefully overlap is set
+/// by RTT-hiding and the registry CDN's per-host limits, none of which
+/// scale with local cores. Deriving it from `numberOfProcessors` (knot
+/// previously used `cores * 4`, i.e. 40 on a 10-core box) opens far more
+/// connections than the registry rewards: Dart's `HttpClient` is HTTP/1.1
+/// only (no multiplexing), so each in-flight request is its own socket
+/// and its own TLS handshake — dozens of them cost handshake latency and
+/// invite server-side throttling without adding throughput once the pipe
+/// and CDN saturate.
 ///
-/// All three values share a single source of truth so the install
-/// pipeline doesn't end up with one stage over-provisioned and the
-/// next stage as the real ceiling.
-final int knotHttpConcurrency = Platform.numberOfProcessors * 4;
-final int knotFileReadConcurrency = Platform.numberOfProcessors * 2;
+/// 16 is the value npm (`maxsockets`, default 15), pnpm
+/// (`network-concurrency`, default 16) and gnpm (a fixed 16, HTTP/2) all
+/// independently land on. Overridable per project via the active mode's
+/// native config key — see `resolveNetworkConcurrency`.
+const int defaultHttpConcurrency = 16;
+
+/// CPU-bound worker-isolate pool size: JSON decode, gzip, sha512, link
+/// batches. One per core — this work is genuinely parallel on the host's
+/// cores, so it tracks the core count.
 final int knotWorkerPoolSize = Platform.numberOfProcessors;
+
+/// File-read fan-out (linker/store). Blocking-async I/O: 2x lets the
+/// kernel pipeline reads while an isolate decodes tar headers.
+final int knotFileReadConcurrency = Platform.numberOfProcessors * 2;

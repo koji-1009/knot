@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:knot/src/core/core.dart';
+import 'package:knot/src/npmrc/npmrc.dart';
 import 'package:knot/src/project/project.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -112,6 +114,65 @@ void main() {
       expect(cfg.mode, ProjectMode.knot);
       expect(cfg.npmrc.registry, 'https://registry.npmjs.org/');
       expect(cfg.npmrc.authTokenFor(Uri.parse('https://example.com/')), 't');
+    });
+  });
+
+  group('resolveNetworkConcurrency', () {
+    test('defaults to 16 when no key is set', () {
+      expect(
+        resolveNetworkConcurrency(NpmrcConfig(const {}), ProjectMode.npm),
+        defaultHttpConcurrency,
+      );
+      expect(
+        resolveNetworkConcurrency(NpmrcConfig(const {}), ProjectMode.pnpm),
+        16,
+      );
+    });
+
+    test('npm/knot mode reads maxsockets', () {
+      final cfg = NpmrcConfig(const {'maxsockets': '8'});
+      expect(resolveNetworkConcurrency(cfg, ProjectMode.npm), 8);
+      expect(resolveNetworkConcurrency(cfg, ProjectMode.knot), 8);
+    });
+
+    test('pnpm mode reads network-concurrency', () {
+      final cfg = NpmrcConfig(const {'network-concurrency': '24'});
+      expect(resolveNetworkConcurrency(cfg, ProjectMode.pnpm), 24);
+    });
+
+    test('each mode ignores the other mode native key (mode fidelity)', () {
+      // npm mode must not pick up pnpm's key, and vice versa.
+      expect(
+        resolveNetworkConcurrency(
+          NpmrcConfig(const {'network-concurrency': '24'}),
+          ProjectMode.npm,
+        ),
+        defaultHttpConcurrency,
+      );
+      expect(
+        resolveNetworkConcurrency(
+          NpmrcConfig(const {'maxsockets': '8'}),
+          ProjectMode.pnpm,
+        ),
+        defaultHttpConcurrency,
+      );
+    });
+
+    test('a non-positive value is treated as unset', () {
+      expect(
+        resolveNetworkConcurrency(
+          NpmrcConfig(const {'maxsockets': '0'}),
+          ProjectMode.npm,
+        ),
+        defaultHttpConcurrency,
+      );
+      expect(
+        resolveNetworkConcurrency(
+          NpmrcConfig(const {'network-concurrency': '-4'}),
+          ProjectMode.pnpm,
+        ),
+        defaultHttpConcurrency,
+      );
     });
   });
 }

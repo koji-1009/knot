@@ -30,7 +30,7 @@ Future<Packument> _decodePackumentBytes(Uint8List bytes) {
   final transferable = TransferableTypedData.fromList([bytes]);
   return Isolate.run(() {
     final raw = transferable.materialize().asUint8List();
-    final decoded = jsonDecode(utf8.decode(raw));
+    final decoded = packumentJsonDecoder.convert(raw);
     if (decoded is! Map) {
       throw const FormatException('packument is not a JSON object');
     }
@@ -84,9 +84,9 @@ DateTime? _freshUntilFromHeaders(Map<String, String> headers) {
 /// and tarball fetch with sha512 integrity verification.
 class RegistryClient {
   /// `HttpClient` tuning:
-  /// - `maxConnectionsPerHost = knotHttpConcurrency` matches the
-  ///   outer install fetch pool; the dart:io default of 6 would
-  ///   serialise registry fetches.
+  /// - `maxConnectionsPerHost = httpConcurrency` matches the outer
+  ///   install fetch pool; the dart:io default of 6 would serialise
+  ///   registry fetches.
   /// - `autoUncompress = false` keeps packument gzip bodies raw so
   ///   they can be shipped to a worker isolate in one shot.
   RegistryClient({
@@ -95,12 +95,13 @@ class RegistryClient {
     this.cache,
     this.offline = false,
     this.preferOffline = false,
+    int httpConcurrency = defaultHttpConcurrency,
     this._getWorkerPool,
   }) : _http = HttpClient()
-         ..maxConnectionsPerHost = knotHttpConcurrency
+         ..maxConnectionsPerHost = httpConcurrency
          ..idleTimeout = const Duration(seconds: 30)
          ..autoUncompress = false,
-       _pool = Pool(knotHttpConcurrency);
+       _pool = Pool(httpConcurrency);
 
   final NpmrcConfig config;
   final HttpClient _http;
@@ -198,7 +199,15 @@ class RegistryClient {
 
   Uri _packumentUrl(String name) {
     final registry = _registryForName(name);
-    return registry.resolve(Uri.encodeComponent(name).replaceAll('%40', '@'));
+    // Encode the scope-separator slash (`@scope/pkg` → `@scope%2Fpkg`)
+    // and leave the leading `@` literal. The percent-encoding is
+    // uppercase because Dart's `Uri` normalizes it to uppercase per
+    // RFC 3986 §6.2.2.1 — npm emits lowercase `%2f`, but the registry
+    // treats the two case-insensitively, so the resolved resource is
+    // identical (see the mode-fidelity note in `doc/spec.md`). Join via
+    // [joinRegistryUrl] so a path-prefixed registry keeps its prefix.
+    final encoded = Uri.encodeComponent(name).replaceAll('%40', '@');
+    return joinRegistryUrl(registry.toString(), encoded);
   }
 
   Uri _registryForName(String name) {

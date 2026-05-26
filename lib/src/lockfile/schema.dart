@@ -48,12 +48,22 @@ class LockedPackage {
     this.scripts = const {},
     this.engines = const {},
     this.signatures = const [],
+    this.installPath,
   });
 
   final String name;
   final String version;
   final Resolution resolution;
   final String? integrity;
+
+  /// `node_modules`-relative install location from the multi-version tree
+  /// resolver: `minimatch` when hoisted, or
+  /// `@scope/parent/node_modules/minimatch` when nested under a
+  /// conflicting version. `null` → `<name>` (top level). Lets the npm
+  /// lockfile writer emit a distinct `packages` key per instance so two
+  /// versions of one name are both recorded (npm package-lock v3 keys by
+  /// path for exactly this reason).
+  final String? installPath;
   final Map<String, String> dependencies;
   final Map<String, String> optionalDependencies;
   final Map<String, String> peerDependencies;

@@ -160,6 +160,23 @@ class Store {
           await entry.rename(dest.path);
         } on FileSystemException {
           // Defensive fallback for the EXDEV / permission edge case.
+          // First check whether a concurrent ingest of the same content
+          // already placed the file (it raced us between the
+          // `dest.exists()` guard above and this rename). If so, the
+          // winner's copy is byte-identical — done, and we skip reading
+          // the whole file into the heap. Mirrors gnpm's stat-before-
+          // copy in `store.go`.
+          if (await dest.exists()) {
+            files.add(
+              StoredFile(
+                relativePath: relativePath,
+                sha512Hex: hex,
+                size: size,
+                mode: stat.mode,
+              ),
+            );
+            continue;
+          }
           final bytes = await entry.readAsBytes();
           final tmp = File('${dest.path}.tmp.${_uniqueTmpSuffix()}');
           await tmp.writeAsBytes(bytes, flush: true);

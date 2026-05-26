@@ -16,6 +16,7 @@ class LinkSpec {
     this.linkAlias,
     this.scripts = const {},
     this.engines = const {},
+    this.installPath,
   });
 
   final String name;
@@ -24,6 +25,13 @@ class LinkSpec {
   final Map<String, String> dependencies;
   final Map<String, String> bin;
   final bool isDirect;
+
+  /// `node_modules`-relative install location for the hoisted layout,
+  /// from the multi-version tree resolver: `react` when hoisted to the
+  /// top level, or `b/node_modules/shared` when nested under a
+  /// conflicting version. `null` → top level (`name`). Ignored by the
+  /// isolated layout, which addresses every instance by `.knot/<id>`.
+  final String? installPath;
 
   /// When non-null, the top-level `node_modules/<linkAlias>` symlink should
   /// be created instead of using [name]. Set for `npm:<pkg>@<range>` aliases.

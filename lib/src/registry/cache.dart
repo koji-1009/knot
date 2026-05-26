@@ -6,20 +6,26 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 
 import 'packument.dart';
+import 'packument_codec.dart';
 
 /// On-disk persistent cache for packuments and raw tarball bytes.
 ///
 /// Layout:
-/// - `<root>/packuments/<safe-name>.json`        — slim packument JSON
-/// - `<root>/packuments/<safe-name>.meta.json`   — etag, last-modified,
-///                                                  freshUntil
+/// - `<root>/packuments/<safe-name>.kpack`       — slim packument, binary
+///                                                  (meta folded in)
+/// - `<root>/packuments/<safe-name>.json`        — legacy slim JSON (read
+///                                                  for back-compat only)
+/// - `<root>/packuments/<safe-name>.meta.json`   — legacy etag / freshUntil
 /// - `<root>/tarballs/<sha512>.tgz`              — verified tarball bytes
 ///
-/// The packument disk format is the slim `Packument.toJson()` output, not
-/// the verbatim registry response. npm packuments include the full version
-/// history with multi-megabyte readme / contributor blobs that the
-/// resolver never reads; serializing only the fields we use cuts disk
-/// size by ~50x and JSON parse time on warm installs proportionally.
+/// Only the fields the resolver and linker consume are stored, not the
+/// verbatim registry response (npm packuments carry multi-MB readme /
+/// contributor blobs the resolver never reads). The `.kpack` binary form
+/// (see `packument_codec.dart`) decodes ~10× faster than `jsonDecode` of
+/// the equivalent JSON — the dominant cost of a warm-cache resolve — and
+/// is ~2.6× smaller on disk. Old `.json` entries are still read so an
+/// upgrade keeps working offline; the next network fetch rewrites the
+/// entry as `.kpack`.
 class RegistryCache {
   RegistryCache({required this.root});
 
@@ -28,6 +34,9 @@ class RegistryCache {
 
   String _packumentDir() => p.join(root, 'packuments');
   String _tarballDir() => p.join(root, 'tarballs');
+
+  String _packumentBinPath(String name) =>
+      p.join(_packumentDir(), '${_safeName(name)}.kpack');
 
   String _packumentPath(String name) =>
       p.join(_packumentDir(), '${_safeName(name)}.json');
@@ -49,17 +58,42 @@ class RegistryCache {
   /// Returns `null` on any read or parse failure — a malformed cache
   /// entry is treated as a miss so the caller falls through to network.
   Future<CachedPackumentBlob?> readPackument(String name) async {
+    // Fast path: the binary `.kpack` entry.
+    final binFile = File(_packumentBinPath(name));
+    if (await binFile.exists()) {
+      try {
+        final blob = decodePackumentBlob(await binFile.readAsBytes());
+        if (blob != null) {
+          return CachedPackumentBlob(
+            packument: blob.packument,
+            etag: blob.etag,
+            lastModified: blob.lastModified,
+            freshUntil: blob.freshUntil,
+          );
+        }
+        // Corrupt/unknown-version `.kpack` → fall through to legacy/miss.
+      } on FileSystemException {
+        // fall through
+      }
+    }
+    return _readLegacyJson(name);
+  }
+
+  /// Read a pre-`.kpack` JSON cache entry (+ its sidecar meta). Kept so an
+  /// upgrade does not force an offline re-fetch of every cached package;
+  /// the next online fetch rewrites the entry as `.kpack`.
+  Future<CachedPackumentBlob?> _readLegacyJson(String name) async {
     final file = File(_packumentPath(name));
     if (!await file.exists()) return null;
-    final String body;
+    final Uint8List bytes;
     try {
-      body = await file.readAsString();
+      bytes = await file.readAsBytes();
     } on FileSystemException {
       return null;
     }
     final Object? json;
     try {
-      json = jsonDecode(body);
+      json = packumentJsonDecoder.convert(bytes);
     } on FormatException {
       return null;
     }
@@ -76,9 +110,8 @@ class RegistryCache {
     );
   }
 
-  /// Write the slim form of [packument] to disk along with revalidation
-  /// metadata. The disk format must be compatible with
-  /// [Packument.fromJson] — see [Packument.toJson].
+  /// Write the slim form of [packument] to disk in the binary `.kpack`
+  /// format (revalidation metadata folded in — see `packument_codec.dart`).
   ///
   /// [freshUntil] records the moment the response stops being usable
   /// without revalidation, derived from `Cache-Control: max-age` per
@@ -91,14 +124,17 @@ class RegistryCache {
     String? lastModified,
     DateTime? freshUntil,
   }) async {
-    final file = File(_packumentPath(packument.name));
+    final file = File(_packumentBinPath(packument.name));
     await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(packument.toJson()));
-    await _writeMeta(packument.name, {
-      'etag': ?etag,
-      'lastModified': ?lastModified,
-      'freshUntil': ?freshUntil?.toUtc().toIso8601String(),
-    });
+    await file.writeAsBytes(
+      encodePackumentBlob(
+        packument: packument,
+        etag: etag,
+        lastModified: lastModified,
+        freshUntil: freshUntil,
+      ),
+      flush: true,
+    );
   }
 
   Future<Map<String, dynamic>?> _readMeta(String name) async {
@@ -110,13 +146,6 @@ class RegistryCache {
     } on FormatException {
       return null;
     }
-  }
-
-  Future<void> _writeMeta(String name, Map<String, dynamic> meta) async {
-    if (meta.isEmpty) return;
-    final file = File(_packumentMetaPath(name));
-    await file.parent.create(recursive: true);
-    await file.writeAsString(const JsonEncoder().convert(meta));
   }
 
   // --- tarball layer -----------------------------------------------------

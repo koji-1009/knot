@@ -24,6 +24,7 @@ import 'package:path/path.dart' as p;
 import 'package:pool/pool.dart';
 
 import 'dependency_spec.dart';
+import 'node_version.dart';
 import 'non_registry_resolver.dart';
 import 'package_json.dart';
 import 'registry_provider.dart';
@@ -240,18 +241,24 @@ class InstallOperation {
       return workerPool ??= await WorkerPool.spawn(size: knotWorkerPoolSize);
     }
 
+    // In-flight registry request budget: a fixed network default,
+    // overridable by the active mode's native key (`maxsockets` /
+    // `network-concurrency`). Shared by the client and the tarball
+    // fetch pools so neither stage out-runs the other.
+    final httpConcurrency = project.resolveNetworkConcurrency(npmrc, mode);
     final client = RegistryClient(
       config: npmrc,
       cache: regCache,
       offline: options.offline,
       preferOffline: options.preferOffline,
+      httpConcurrency: httpConcurrency,
       getWorkerPool: getWorkerPool,
     );
 
     // Kick off `node --version` ahead of everything else so its
     // ~45 ms fork+exec runs concurrently with reading lockfiles and
     // packuments. Consumed by `_checkEngines` near the end.
-    final nodeVersionFuture = _detectNodeVersionAsync();
+    final nodeVersionFuture = _detectNodeVersionAsync(cacheRoot);
 
     try {
       final provider = RegistryPackageProvider(
@@ -288,6 +295,7 @@ class InstallOperation {
             client: client,
             getWorkerPool: getWorkerPool,
             npmrc: npmrc,
+            httpConcurrency: httpConcurrency,
             stopwatch: stopwatch,
             nodeVersionFuture: nodeVersionFuture,
           );
@@ -426,31 +434,40 @@ class InstallOperation {
         tarballFutures[id]!.then((_) => null, onError: (_) => null);
       }
 
-      final solver = PubgrubSolver(
-        SolverRequest(
+      // Multi-version tree resolver (npm's hoist-then-nest model): unlike
+      // the single-version pubgrub solver it can install A→x@^1 alongside
+      // B→x@^2 (e.g. eslint→minimatch@^3 with @typescript-eslint→
+      // minimatch@^9), which real-world graphs routinely require.
+      final treeResolver = TreeResolver(
+        TreeResolveRequest(
           dependencies: deps,
           provider: provider,
           optionalDependencies: pkg.optionalDependencies,
           overrides: pkg.overrides,
           nestedOverrides: pkg.nestedOverrides,
           preferred: preferred,
-          onDecide: prefetchTarball,
+          onResolved: prefetchTarball,
         ),
       );
-      final solution = await solver.solve();
+      final resolved = await treeResolver.resolve();
+      final resolveWarnings = <String>[...resolved.warnings];
       mark('resolver (packument fetches + solve)');
       _emit(
         ResolutionCompleted(
-          resolved: solution.assignments.length,
+          resolved: resolved.instances.length,
           elapsed: stopwatch.elapsed,
         ),
       );
 
       if (options.frozenLockfile && existingLock != null) {
-        _verifyFrozen(solution, existingLock, projectLockfileName(mode));
+        _verifyFrozenInstances(
+          resolved.instances,
+          existingLock,
+          projectLockfileName(mode),
+        );
       }
 
-      final fetchPool = Pool(knotHttpConcurrency);
+      final fetchPool = Pool(httpConcurrency);
       final linkSpecs = <LinkSpec>[];
       final lockPackages = <String, LockedPackage>{};
       final SignatureVerifier? signatureVerifier =
@@ -460,9 +477,9 @@ class InstallOperation {
 
       final fetchFutures = <Future<void>>[];
       try {
-        for (final entry in solution.assignments.entries) {
-          final name = entry.key;
-          final version = entry.value;
+        for (final inst in resolved.instances) {
+          final name = inst.name;
+          final version = inst.version;
           fetchFutures.add(
             fetchPool.withResource(() async {
               final slice = await provider.sliceOf(name, version);
@@ -508,7 +525,7 @@ class InstallOperation {
                   version: version.toString(),
                   result: check,
                 );
-                if (warn != null) solver.warnings.add(warn);
+                if (warn != null) resolveWarnings.add(warn);
               }
               final pool = await getWorkerPool();
               await pool.ingest(
@@ -524,17 +541,20 @@ class InstallOperation {
                   name: name,
                   version: version.toString(),
                   tarballSha512Hex: slice.integrity!,
+                  // Per-instance resolved dep versions from the tree
+                  // resolver: which version of each dep THIS instance
+                  // uses (eslint's minimatch@3 vs typescript-estree's
+                  // minimatch@9). Drives the isolated linker's symlinks.
                   dependencies: {
-                    for (final d in slice.dependencies.entries)
-                      if (!bundled.contains(d.key) &&
-                          solution.assignments[d.key] != null)
-                        d.key: solution.assignments[d.key]!.toString(),
+                    for (final e in inst.deps.entries)
+                      if (!bundled.contains(e.key)) e.key: e.value.toString(),
                   },
-                  isDirect: deps.containsKey(name),
+                  isDirect: inst.isDirect,
                   linkAlias: aliasByPackage[name],
                   bin: slice.bin,
                   scripts: slice.scripts,
                   engines: slice.engines,
+                  installPath: inst.path,
                 ),
               );
               lockPackages['$name@$version'] = LockedPackage(
@@ -556,6 +576,7 @@ class InstallOperation {
                   for (final s in slice.signatures)
                     LockedSignature(keyid: s.keyid, sig: s.sig),
                 ],
+                installPath: inst.path,
               );
             }),
           );
@@ -564,7 +585,7 @@ class InstallOperation {
       } finally {
         await fetchPool.close();
       }
-      mark('fetch tarballs + ingest (${solution.assignments.length} pkgs)');
+      mark('fetch tarballs + ingest (${resolved.instances.length} pkgs)');
 
       // Resolve and materialize non-registry specifiers (file:/link:/https/git).
       final directLinkOverrides = <String, String>{};
@@ -609,7 +630,7 @@ class InstallOperation {
         await hoisted.link(
           projectRoot: projectRoot,
           packages: linkSpecsForLinker,
-          warnings: solver.warnings,
+          warnings: resolveWarnings,
         );
       } else {
         final linker = NodeModulesLinker(materializer: materializer);
@@ -662,7 +683,7 @@ class InstallOperation {
 
       _checkEngines(
         linkSpecs,
-        solver.warnings,
+        resolveWarnings,
         nodeVer: await nodeVersionFuture,
       );
 
@@ -670,7 +691,7 @@ class InstallOperation {
         await _runLifecycleScripts(
           rootPackage: pkg,
           linkSpecs: linkSpecs,
-          warnings: solver.warnings,
+          warnings: resolveWarnings,
           layout: layout,
         );
       }
@@ -698,7 +719,7 @@ class InstallOperation {
       await _runPostInstallAudit(
         lockfile: lockfile,
         npmrc: npmrc,
-        warnings: solver.warnings,
+        warnings: resolveWarnings,
       );
 
       stopwatch.stop();
@@ -710,12 +731,12 @@ class InstallOperation {
         ),
       );
       _logger.info(
-        'resolved ${solution.assignments.length} packages '
+        'resolved ${resolved.instances.length} packages '
         'in ${stopwatch.elapsed.inMilliseconds}ms',
       );
       await _materializeConfigDeps(client: client, pkg: pkg);
       await _writeWorkspaceState(hash: freshHash, engineKey: engineKey);
-      return InstallReport(warnings: solver.warnings);
+      return InstallReport(warnings: resolveWarnings);
     } finally {
       client.close();
       await workerPool?.dispose();
@@ -1040,6 +1061,7 @@ class InstallOperation {
     required RegistryClient client,
     required Future<WorkerPool> Function() getWorkerPool,
     required NpmrcConfig npmrc,
+    required int httpConcurrency,
     required Stopwatch stopwatch,
     required Future<Version?> nodeVersionFuture,
   }) async {
@@ -1073,7 +1095,7 @@ class InstallOperation {
     final lifecycleWarnings = <String>[];
 
     // Fetch any missing tarballs in parallel; ingest into the store.
-    final fetchPool = Pool(knotHttpConcurrency);
+    final fetchPool = Pool(httpConcurrency);
     final futures = <Future<void>>[];
     try {
       for (final entry in lockfile.packages.values) {
@@ -1174,29 +1196,89 @@ class InstallOperation {
         await readPool.close();
       }
     }
-    final linkSpecs = <LinkSpec>[
-      for (final entry in lockfile.packages.values)
-        () {
-          final fallback = fallbackData[entry.integrity];
-          return LinkSpec(
-            name: entry.name,
-            version: entry.version,
-            tarballSha512Hex: entry.integrity!,
-            dependencies: {
+    LinkSpec specFor(
+      LockedPackage entry, {
+      String? installPath,
+      Map<String, String>? dependencies,
+      bool? isDirect,
+    }) {
+      final fallback = fallbackData[entry.integrity];
+      return LinkSpec(
+        name: entry.name,
+        version: entry.version,
+        tarballSha512Hex: entry.integrity!,
+        dependencies:
+            dependencies ??
+            {
               for (final d in entry.dependencies.entries)
                 d.key: lockedVersionByName[d.key] ?? d.value,
             },
-            isDirect: directNames.contains(entry.name),
-            bin: entry.bin.isNotEmpty ? entry.bin : fallback?.bin ?? const {},
-            scripts: entry.scripts.isNotEmpty
-                ? entry.scripts
-                : fallback?.scripts ?? const {},
-            engines: entry.engines.isNotEmpty
-                ? entry.engines
-                : fallback?.engines ?? const {},
-          );
-        }(),
-    ];
+        isDirect: isDirect ?? directNames.contains(entry.name),
+        bin: entry.bin.isNotEmpty ? entry.bin : fallback?.bin ?? const {},
+        scripts: entry.scripts.isNotEmpty
+            ? entry.scripts
+            : fallback?.scripts ?? const {},
+        engines: entry.engines.isNotEmpty
+            ? entry.engines
+            : fallback?.engines ?? const {},
+        installPath: installPath,
+      );
+    }
+
+    // When the locked graph holds two versions of any one name, a flat
+    // one-version-per-name build would drop the nested copies. Reconstruct
+    // the exact nested tree from the locked graph via the multi-version
+    // resolver — network-free, since every version + dep edge is already
+    // in the lockfile, and the locked version set reproduces the same
+    // placement the cold install made. No-conflict graphs (the common
+    // case) keep the cheap flat build untouched.
+    final lockedNames = <String, Set<String>>{};
+    for (final e in lockfile.packages.values) {
+      (lockedNames[e.name] ??= {}).add(e.version);
+    }
+    final List<LinkSpec> linkSpecs;
+    if (lockedNames.values.any((vs) => vs.length > 1)) {
+      final tree = await TreeResolver(
+        TreeResolveRequest(
+          dependencies: {
+            ...pkg.dependencies,
+            if (!options.production) ...pkg.devDependencies,
+          },
+          optionalDependencies: pkg.optionalDependencies,
+          provider: _LockedGraphProvider(lockfile),
+          overrides: pkg.overrides,
+          nestedOverrides: pkg.nestedOverrides,
+        ),
+      ).resolve();
+      final byId = {
+        for (final e in lockfile.packages.values) '${e.name}@${e.version}': e,
+      };
+      final placed = <String>{for (final inst in tree.instances) inst.id};
+      linkSpecs = [
+        for (final inst in tree.instances)
+          if (byId[inst.id] case final entry?)
+            specFor(
+              entry,
+              installPath: inst.path,
+              isDirect: inst.isDirect,
+              dependencies: {
+                for (final d in inst.deps.entries) d.key: d.value.toString(),
+              },
+            ),
+        // Entries the tree resolver could not place — `npm:` aliases and
+        // `file:`/`git:` specifiers are non-semver, so the greedy walk
+        // skips them. Keep them flat from the lockfile (the no-conflict
+        // branch's behavior) so a multi-version graph that also uses an
+        // alias does not drop the aliased package on a warm relink.
+        for (final entry in lockfile.packages.values)
+          if (!placed.contains('${entry.name}@${entry.version}'))
+            specFor(entry),
+      ];
+    } else {
+      linkSpecs = [
+        for (final entry in lockfile.packages.values) specFor(entry),
+      ];
+    }
     mark(
       'build LinkSpecs (read ${linkSpecs.length} manifests + parse pkg.json)',
     );
@@ -1492,21 +1574,16 @@ class InstallOperation {
     }
   }
 
-  /// Dispatch `node --version` asynchronously so the ~45 ms fork+exec
-  /// can overlap with other install-time work. The result feeds
-  /// [_checkEngines].
-  Future<Version?> _detectNodeVersionAsync() async {
-    try {
-      final result = await Process.run('node', ['--version']);
-      if (result.exitCode != 0) return null;
-      final raw = (result.stdout as String).trim();
-      final body = raw.startsWith('v') ? raw.substring(1) : raw;
-      return tryParseVersion(body);
-    } on ProcessException {
-      return null;
-    } on Object {
-      return null;
-    }
+  /// Resolve the host node version, served from a disk cache keyed by the
+  /// `node` binary's identity so a warm relink does not re-pay the ~45 ms
+  /// `node --version` fork+exec. Dispatched early so the (cold-only) fork
+  /// still overlaps other install work. The result feeds [_checkEngines];
+  /// `--engine-strict` forces a fresh probe so a fail-closed check can
+  /// never act on a stale cached version. See [NodeVersionCache].
+  Future<Version?> _detectNodeVersionAsync(String cacheRoot) {
+    return NodeVersionCache(
+      p.join(cacheRoot, 'node-version.json'),
+    ).detect(bypassCache: options.engineStrict);
   }
 
   bool _matchesCurrentPlatform(PackumentVersion slice) {
@@ -1516,11 +1593,14 @@ class InstallOperation {
     return osOk && cpuOk && libcOk;
   }
 
-  void _verifyFrozen(SolverResult result, Lockfile lock, String lockfileName) {
-    final mismatches = <String>[];
-    for (final entry in result.assignments.entries) {
-      final id = '${entry.key}@${entry.value}';
-      if (!lock.packages.containsKey(id)) mismatches.add(id);
+  void _verifyFrozenInstances(
+    List<ResolvedInstance> instances,
+    Lockfile lock,
+    String lockfileName,
+  ) {
+    final mismatches = <String>{};
+    for (final inst in instances) {
+      if (!lock.packages.containsKey(inst.id)) mismatches.add(inst.id);
     }
     if (mismatches.isNotEmpty) {
       throw UsageError(
@@ -1602,4 +1682,42 @@ bool _platformList(List<String> entries, String current) {
   if (negative.contains(current)) return false;
   if (positive.isEmpty) return true;
   return positive.contains(current);
+}
+
+/// [PackageProvider] backed by a resolved lockfile — every version and
+/// dependency edge is already pinned, so it serves the multi-version tree
+/// resolver with no network access. Used by the locked install path to
+/// reconstruct the nested `node_modules` tree (which versions go where)
+/// that a flat one-version-per-name build would lose.
+class _LockedGraphProvider implements PackageProvider {
+  _LockedGraphProvider(Lockfile lockfile) {
+    for (final e in lockfile.packages.values) {
+      final v = tryParseVersion(e.version);
+      if (v == null) continue;
+      (_versions[e.name] ??= []).add(v);
+      _deps['${e.name}@${e.version}'] = PackageDependencies(
+        dependencies: e.dependencies,
+        optionalDependencies: e.optionalDependencies,
+        peerDependencies: e.peerDependencies,
+        optionalPeers: {
+          for (final m in e.peerDependenciesMeta.entries)
+            if (m.value.optional) m.key,
+        },
+      );
+    }
+  }
+
+  final Map<String, List<Version>> _versions = {};
+  final Map<String, PackageDependencies> _deps = {};
+
+  @override
+  Future<List<Version>> versions(String package) async =>
+      _versions[package] ?? const [];
+
+  @override
+  Future<PackageDependencies> dependenciesOf(
+    String package,
+    Version version,
+  ) async =>
+      _deps['$package@$version'] ?? PackageDependencies(dependencies: const {});
 }

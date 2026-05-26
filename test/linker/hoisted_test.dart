@@ -101,25 +101,37 @@ void main() {
   );
 
   test(
-    'hoisted resolves duplicate-package conflict in favor of higher version',
+    'hoisted nests a conflicting version at its resolver-assigned path',
     () async {
+      // Multi-version model: the tree resolver hoists one version of a
+      // name and nests the conflicting one under its requirer (via
+      // `installPath`). The linker places each at its path — both
+      // versions coexist, exactly as npm installs them.
       final tmp = await Directory.systemTemp.createTemp('knot_hoisted_conf_');
       try {
         final store = Store(p.join(tmp.path, 'store'));
 
         final v1Hash = 'lodash-1-hash';
-        final v1Tar = await _buildTar([
-          ('package/package.json', '{"name":"lodash","version":"3.0.0"}'),
-          ('package/v.js', 'module.exports = 3;'),
-        ]);
-        await store.ingestTarball(bytes: v1Tar, tarballSha512Hex: v1Hash);
-
+        await store.ingestTarball(
+          bytes: await _buildTar([
+            ('package/package.json', '{"name":"lodash","version":"3.0.0"}'),
+          ]),
+          tarballSha512Hex: v1Hash,
+        );
         final v2Hash = 'lodash-2-hash';
-        final v2Tar = await _buildTar([
-          ('package/package.json', '{"name":"lodash","version":"4.17.21"}'),
-          ('package/v.js', 'module.exports = 4;'),
-        ]);
-        await store.ingestTarball(bytes: v2Tar, tarballSha512Hex: v2Hash);
+        await store.ingestTarball(
+          bytes: await _buildTar([
+            ('package/package.json', '{"name":"lodash","version":"4.17.21"}'),
+          ]),
+          tarballSha512Hex: v2Hash,
+        );
+        final consumerHash = 'consumer-hash';
+        await store.ingestTarball(
+          bytes: await _buildTar([
+            ('package/package.json', '{"name":"consumer","version":"1.0.0"}'),
+          ]),
+          tarballSha512Hex: consumerHash,
+        );
 
         final project = await Directory(p.join(tmp.path, 'project')).create();
         final pool = await WorkerPool.spawn(size: 2);
@@ -128,38 +140,54 @@ void main() {
           workerPool: pool,
         );
         final linker = HoistedLinker(materializer: materializer);
-        final warnings = <String>[];
         await linker.link(
           projectRoot: project.path,
           packages: [
             LinkSpec(
-              name: 'lodash',
-              version: '3.0.0',
-              tarballSha512Hex: v1Hash,
-              dependencies: {},
+              name: 'consumer',
+              version: '1.0.0',
+              tarballSha512Hex: consumerHash,
+              dependencies: {'lodash': '3.0.0'},
+              isDirect: true,
             ),
+            // lodash@4 hoisted to the top level.
             LinkSpec(
               name: 'lodash',
               version: '4.17.21',
               tarballSha512Hex: v2Hash,
               dependencies: {},
             ),
+            // lodash@3 nested under consumer (incompatible with the
+            // hoisted v4).
+            LinkSpec(
+              name: 'lodash',
+              version: '3.0.0',
+              tarballSha512Hex: v1Hash,
+              dependencies: {},
+              installPath: 'consumer/node_modules/lodash',
+            ),
           ],
-          warnings: warnings,
         );
 
-        final pkg = await File(
+        final top = await File(
           p.join(project.path, 'node_modules', 'lodash', 'package.json'),
         ).readAsString();
+        expect(top, contains('4.17.21'), reason: 'v4 hoisted to top level');
+
+        final nested = await File(
+          p.join(
+            project.path,
+            'node_modules',
+            'consumer',
+            'node_modules',
+            'lodash',
+            'package.json',
+          ),
+        ).readAsString();
         expect(
-          pkg,
-          contains('4.17.21'),
-          reason: 'highest version should win in hoisted mode',
-        );
-        expect(
-          warnings,
-          isNotEmpty,
-          reason: 'conflict should produce a warning',
+          nested,
+          contains('3.0.0'),
+          reason: 'v3 nested under its requirer — both versions coexist',
         );
         await pool.dispose();
       } finally {

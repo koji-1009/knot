@@ -100,7 +100,7 @@ class RegistryKeyStore {
     }
 
     // 2) Network. On success, persist to disk for the next process.
-    final uri = registry.resolve('-/npm/v1/keys');
+    final uri = joinRegistryUrl(registry.toString(), '-/npm/v1/keys');
     final request = await _http.getUrl(uri);
     _authHeadersFor(uri).forEach((k, v) => request.headers.set(k, v));
     final response = await request.close();
