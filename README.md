@@ -80,7 +80,10 @@ macOS and Linux are supported (`/usr/bin/time -lp` / `-v`); Windows is not.
 
 Sample numbers from one author run on **macOS arm64 (MacBook Air M4,
 10 cores)**, fixture `vite-react` (16 packages: react + react-dom +
-vite with its transitive deps), measured 2026-05-23.
+vite with its transitive deps), measured 2026-05-26 (current `main`,
+after the multi-version resolver and the `node --version` / packument
+binary caches). Cold, warm, memory, and binary size are all from this
+one session and version set.
 
 Pinned versions (everything below is sensitive to the package manager's
 implementation language and release, especially while bun is mid-migration
@@ -90,20 +93,20 @@ from Zig to Rust — these numbers belong to **this** set of versions):
 |-----------|---------|
 | Dart SDK (used to build knot) | 3.12.0 |
 | knot | HEAD of this branch |
-| pnpm | 11.1.3 |
+| pnpm | 11.2.2 |
 | npm | 11.12.1 |
 | bun | 1.3.14 |
 
 | tool | scenario | best      | center             | worst       | peak memory |
 |------|----------|-----------|--------------------|-------------|-------------|
-| **knot** | cold | **1450 ms**  | **1760 ms**           | 7830 ms     | **186 MB**  |
-| **knot** | warm | **52.8 ms**  | **54.0 ± 0.6 ms**     | 55.1 ms     |  **11 MB**  |
-| pnpm | cold | 1360 ms      | 1720 ms               | 3170 ms     | 395 MB      |
-| pnpm | warm | 268.2 ms     | 272.3 ± 2.2 ms        | 278.7 ms    | 263 MB      |
-| npm  | cold | 6150 ms      | 7310 ms               | 9210 ms     | 377 MB      |
-| npm  | warm | 388.9 ms     | 423.6 ± 62.6 ms       | 666.1 ms    | 104 MB      |
-| bun  | cold | **940 ms**   | **1710 ms**           | 5950 ms     | 134 MB      |
-| bun  | warm | **7.6 ms**   | **7.9 ± 0.3 ms**      | 8.9 ms      |   **8 MB**  |
+| **knot** | cold | **1100 ms**  | **1660 ms**           | 2260 ms     | **133 MB**  |
+| **knot** | warm | **14.7 ms**  | **15.6 ± 0.5 ms**     | 16.5 ms     |  **11 MB**  |
+| pnpm | cold | 1330 ms      | 1425 ms               | 2120 ms     | 398 MB      |
+| pnpm | warm | 286.1 ms     | 290.0 ± 2.7 ms        | 294.3 ms    | 264 MB      |
+| npm  | cold | 6980 ms      | 7930 ms               | 10640 ms    | 382 MB      |
+| npm  | warm | 398.7 ms     | 419.9 ± 39.6 ms       | 582.0 ms    | 107 MB      |
+| bun  | cold | **760 ms**   | **910 ms**            | 1240 ms     | 125 MB      |
+| bun  | warm | **8.5 ms**   | **9.2 ± 0.6 ms**      | 10.7 ms     |   **7 MB**  |
 
 - `best` = min over N runs (the floor when the network and host
   cooperate — useful for "how fast can this go").
@@ -111,10 +114,17 @@ from Zig to Rust — these numbers belong to **this** set of versions):
 - `worst` = max over N runs (the tail; cold can spike to several
   times the median on a network-noisy session — treat the bracket as
   that session's spread, not a confidence interval).
-- Cold from `tools/bench/run.sh --cold-runs 15`; warm from
-  `hyperfine --warmup 2 --runs 20` with each tool seeded against its
+- Cold + peak memory from `tools/bench/run.sh --cold-runs 10`; warm
+  from `hyperfine --warmup 2 --runs 20` (run.sh's `/usr/bin/time` is too
+  coarse for the sub-100 ms warm tools), each tool seeded against its
   own lockfile.
 - Peak memory is `/usr/bin/time -lp`'s `peak memory footprint`.
+- knot's warm relink reads packuments from a binary cache and a
+  disk-cached `node --version`, so it neither forks `node` nor
+  `jsonDecode`s multi-MB packuments — hence the sub-20 ms warm install.
+- Cold is network-bound; the `worst` column is one session's tail, not a
+  confidence interval. Re-run in your own environment for a current
+  picture.
 
 Rerun in your own environment with the current versions for an up-to-date
 picture — bun's Zig→Rust migration in particular is in flux.
@@ -124,10 +134,10 @@ picture — bun's Zig→Rust migration in particular is in flux.
 `dart build cli` produces a self-contained bundle under `build/bundle/`:
 
 ```
-8.2M  bundle/bin/knot
-505K  bundle/lib/libboringssl_dart.dylib
+8.3M  bundle/bin/knot
+508K  bundle/lib/libboringssl_dart.dylib
 ----
-8.7M  total
+8.8M  total
 ```
 
 (macOS arm64. Linux / Windows are within 10% of these numbers.) For
@@ -135,7 +145,7 @@ comparison, npm requires Node.js (~60 MB) plus its own ~30 MB of
 JS modules; `pnpm`'s standalone build bundles a Node runtime and
 sits around 50 MB; `bun`'s standalone binary is ~70 MB. knot ships
 no JavaScript runtime — `dart build cli` produces the AOT binary
-plus a 505 KiB BoringSSL dylib (ECDSA + SHA-512 only, the rest of
+plus a 508 KiB BoringSSL dylib (ECDSA + SHA-512 only, the rest of
 the upstream library is stripped at link time).
 
 ## License
