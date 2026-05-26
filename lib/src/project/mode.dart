@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../core/core.dart';
+import '../npmrc/npmrc.dart';
+
 /// Project mode determines which config sources and lockfile format
 /// knot uses.
 ///
@@ -48,6 +51,22 @@ ProjectMode detectProjectMode(String projectRoot) {
     return ProjectMode.npm;
   }
   return ProjectMode.knot;
+}
+
+/// Resolve the in-flight registry request budget for [mode], honoring the
+/// active package manager's native config key and falling back to
+/// [defaultHttpConcurrency].
+///
+/// Mode fidelity (see the principle in `doc/spec.md` and the
+/// [ProjectMode] doc): where npm and pnpm expose the same knob under
+/// different names, knot reads the one the active mode's tool reads —
+/// `network-concurrency` in pnpm mode, npm's `maxsockets` in npm/knot
+/// mode. A non-positive value is treated as unset (npm and pnpm both
+/// reject `<= 0` here), so it falls back to the default.
+int resolveNetworkConcurrency(NpmrcConfig config, ProjectMode mode) {
+  final key = mode == ProjectMode.pnpm ? 'network-concurrency' : 'maxsockets';
+  final value = config.integer(key, fallback: defaultHttpConcurrency);
+  return value >= 1 ? value : defaultHttpConcurrency;
 }
 
 bool _fileExists(String root, String name) =>

@@ -37,6 +37,19 @@ knot decides where it reads and writes configuration / lockfile data from the on
 
 The `knot` and `npm` modes share their on-disk surface; the distinction exists only to label projects that have never been touched by an npm-ecosystem tool. knot does not introduce a new lockfile format.
 
+### 1.1 Mode fidelity
+
+**Principle.** Wherever npm and pnpm differ in observable behavior, knot matches the active mode's native tool. The goal is that knot is a transparent drop-in: a project keeps the artifacts, the wire traffic, and the tuning knobs it already had, and gets the same result it would from the tool that produced those artifacts. This is the runtime counterpart of knot's at-rest config rule (npm-canonical formats at rest; pnpm files consumed transparently).
+
+The principle binds three kinds of divergence:
+
+- **Config keys with different names for the same knob.** knot reads the key the active mode's tool reads: the in-flight registry request budget comes from npm's `maxsockets` in `npm` / `knot` mode and pnpm's `network-concurrency` in `pnpm` mode (default `16` either way; see [§2.4](#24-settings-reference)). A value is never read from both keys at once.
+- **Resolution / layout differences with different outcomes.** These are specified in their own sections (lockfile format per [§4](#4-lockfiles), `node_modules` layout, etc.).
+
+The boundary: the principle binds **observable** behavior. Where npm and pnpm differ only in a form that the registry — or any other consumer — cannot distinguish, knot does not contort to reproduce the difference. The scope-separator slash in a packument URL is the canonical example: npm emits lowercase `%2f` (`name.replace('/', '%2f')`) and pnpm uppercase `%2F` (`encodeURIComponent`), but the npm registry treats percent-encoding case-insensitively (RFC 3986 §6.2.2.1), so both resolve the same resource. knot emits `%2F` in every mode — not by choice but because Dart's `Uri` normalizes percent-encoding to uppercase and `dart:io`'s HTTP client offers no way to send a non-normalized request target — and this is acceptable precisely because the difference is provably immaterial. knot also keeps its own `User-Agent` (`knot/<version>`) in every mode rather than impersonating npm or pnpm: the principle is compatibility, not disguise.
+
+The other standing exception is at-rest file formats, where knot is deliberately npm-canonical and converts pnpm input — that rule is stated in [§1](#1-project-modes) and overrides this one for files written to disk.
+
 ---
 
 ## 2. Configuration
@@ -110,6 +123,14 @@ How to treat a candidate version whose packument has no `time[v]` entry. `true` 
 - **Source**: `.npmrc minimum-release-age-exclude=` (comma-separated)
 
 Packages matching any pattern bypass the `minimumReleaseAge` filter.
+
+#### `networkConcurrency`
+
+- **Type**: positive integer
+- **Default**: `16`
+- **Source**: `.npmrc maxsockets=` in `npm` / `knot` mode, `.npmrc network-concurrency=` in `pnpm` mode (mode fidelity — [§1.1](#11-mode-fidelity))
+
+Caps the number of registry requests (packuments + tarballs) in flight at once. This is a **network** property — RTT-hiding plus the registry CDN's per-host limits — not a CPU one, so the default is a fixed constant rather than scaled off the core count: knot's `HttpClient` is HTTP/1.1, so each in-flight request is its own socket and TLS handshake, and opening dozens past the point the pipe and CDN saturate only adds handshake latency and invites throttling. `16` is the band npm (`maxsockets` default 15), pnpm (`network-concurrency` default 16) and the Go reference implementation all land on. A non-positive value is treated as unset. CPU-bound work (JSON decode, hashing, link batches) has a separate, core-scaled budget.
 
 #### `allowBuilds`
 

@@ -6,3 +6,4 @@ export 'provider.dart';
 export 'pubgrub.dart';
 export 'solver.dart';
 export 'term.dart';
+export 'tree_resolver.dart';

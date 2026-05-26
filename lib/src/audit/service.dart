@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:knot/src/core/core.dart';
 import 'package:knot/src/lockfile/lockfile.dart';
 import 'package:knot/src/npmrc/npmrc.dart';
 import 'package:knot/src/semver/semver.dart';
@@ -114,7 +115,10 @@ class AuditService {
     List<AuditFinding> findings,
     List<String> errors,
   ) async {
-    final endpoint = registry.resolve('-/npm/v1/security/advisories/bulk');
+    final endpoint = joinRegistryUrl(
+      registry.toString(),
+      '-/npm/v1/security/advisories/bulk',
+    );
     final body = jsonEncode({
       for (final e in groupedByName.entries) e.key: e.value.toList(),
     });

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
@@ -439,7 +438,7 @@ Future<void> _workerMain(SendPort bootReply) async {
       case final _DecodePackumentMsg m:
         try {
           final raw = m.bytes.materialize().asUint8List();
-          final decoded = jsonDecode(utf8.decode(raw));
+          final decoded = packumentJsonDecoder.convert(raw);
           if (decoded is! Map) {
             m.replyTo.send(_Err('packument is not a JSON object'));
             break;
@@ -452,8 +451,8 @@ Future<void> _workerMain(SendPort bootReply) async {
       case final _DecodePackumentGzippedMsg m:
         try {
           final compressed = m.bytes.materialize().asUint8List();
-          final raw = gzip.decode(compressed) as Uint8List;
-          final decoded = jsonDecode(utf8.decode(raw));
+          final raw = gzip.decode(compressed);
+          final decoded = packumentJsonDecoder.convert(raw);
           if (decoded is! Map) {
             m.replyTo.send(_Err('packument is not a JSON object'));
             break;

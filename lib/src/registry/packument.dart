@@ -1,3 +1,15 @@
+import 'dart:convert';
+
+/// Fused UTF-8 + JSON decoder for registry / cache packument bytes.
+///
+/// Decodes bytes straight to an object in a single pass, skipping the
+/// intermediate multi-MB `String` that `jsonDecode(utf8.decode(bytes))`
+/// materializes. Measured ~28% faster (28 ms → 20 ms) on a 9.4 MB warm
+/// packument-cache read. Reused (not rebuilt per call) since `fuse`
+/// allocates a converter.
+final Converter<List<int>, Object?> packumentJsonDecoder = const Utf8Decoder()
+    .fuse(const JsonDecoder());
+
 /// A simplified npm packument — only the fields knot consumes during
 /// resolution. Storing the full packument as `Map<String, dynamic>` wastes
 /// memory and pins JSON strings.
@@ -15,9 +27,16 @@ class Packument {
     final versions = <String, PackumentVersion>{};
     if (rawVersions is Map) {
       for (final entry in rawVersions.entries) {
-        if (entry.value is! Map) continue;
-        final v = Map<String, dynamic>.from(entry.value as Map);
-        versions[entry.key as String] = PackumentVersion.fromJson(v);
+        final value = entry.value;
+        if (value is! Map) continue;
+        // `.cast` is a zero-copy view over the decoded map; `.from`
+        // would deep-copy every version slice. A full packument carries
+        // ~30 fields per version (readme, maintainers, _npmVersion, …)
+        // that `fromJson` never reads, so copying them is pure waste on
+        // a hot path that runs once per published version.
+        versions[entry.key as String] = PackumentVersion.fromJson(
+          value.cast<String, dynamic>(),
+        );
       }
     }
     final tags = <String, String>{};
@@ -104,8 +123,9 @@ class PackumentVersion {
 
   factory PackumentVersion.fromJson(Map<String, dynamic> json) {
     final dist = json['dist'];
+    // Zero-copy view, mirroring the version-map handling above.
     final distMap = dist is Map
-        ? Map<String, dynamic>.from(dist)
+        ? dist.cast<String, dynamic>()
         : const <String, dynamic>{};
     final rawSignatures = distMap['signatures'];
     final signatures = <DistSignature>[];

@@ -16,10 +16,12 @@ class HoistedLinker {
   HoistedLinker({required this.materializer});
   final StoreMaterializer materializer;
 
-  /// Materialize [packages] into a flat `<root>/node_modules/`.
-  ///
-  /// On conflict the highest-versioned spec wins; the lost ones are
-  /// reported in [warnings].
+  /// Materialize [packages] into `<root>/node_modules/`, each at the
+  /// `installPath` the tree resolver assigned — top level when hoisted,
+  /// or nested (`<parent>/node_modules/<name>`) when a conflicting
+  /// version already holds the top-level slot. Multiple versions of one
+  /// name coexist. [warnings] is accepted for call-site compatibility;
+  /// the resolver, not the linker, now decides placement.
   Future<void> link({
     required String projectRoot,
     required List<LinkSpec> packages,
@@ -40,42 +42,63 @@ class HoistedLinker {
     Directory(binsRoot).createSync(recursive: true);
     mark('node_modules + .bin setup');
 
-    // Pick the highest version per package name.
-    final chosen = <String, LinkSpec>{};
+    // The tree resolver already decided each instance's place: top-level
+    // (`installPath == name`) or nested under a conflicting version
+    // (`b/node_modules/shared`). Materialize each at its path — multiple
+    // versions of one name coexist, exactly as npm/pnpm install them.
+    // Dedupe only by exact destination (the same instance can be reached
+    // via several edges).
+    final byDest = <String, LinkSpec>{};
     for (final spec in packages) {
-      final current = chosen[spec.name];
-      if (current == null) {
-        chosen[spec.name] = spec;
-        continue;
-      }
-      if (_versionGreater(spec.version, current.version)) {
-        warnings?.add('hoisted: ${current.id} dropped in favor of ${spec.id}');
-        chosen[spec.name] = spec;
-      } else {
-        warnings?.add('hoisted: ${spec.id} dropped in favor of ${current.id}');
-      }
+      final rel = spec.installPath ?? spec.topLevelName;
+      byDest.putIfAbsent(rel, () => spec);
     }
 
-    // Materialize every selected package's tree in one batch so the
-    // materializer can push the syscalls into its worker pool in
-    // parallel. On macOS that means N parallel `clonefile(2)` calls
-    // instead of one-at-a-time on the main isolate (synchronous FFI
-    // doesn't yield); elsewhere the per-file hardlink pool already
-    // covered parallelism.
-    final tasks = <MaterializeTask>[];
-    for (final spec in chosen.values) {
-      final dest = p.join(nodeModulesRoot, spec.name);
-      if (Directory(dest).existsSync()) continue;
-      tasks.add(MaterializeTask(integrity: spec.tarballSha512Hex, dest: dest));
+    // Materialize **shallowest-first**: a parent must be fully cloned
+    // before its nested `node_modules` is created. Otherwise the mkdir
+    // for a nested child (`b/node_modules/shared` → needs `node_modules/b`)
+    // creates an empty `node_modules/b`, and the later recursive
+    // `clonefile` of `b` then fails because its destination already
+    // exists (and racing workers hit a delete-ENOENT). Within a depth the
+    // materializer still fans the clones across its worker pool.
+    final byDepth = <int, List<MapEntry<String, LinkSpec>>>{};
+    for (final entry in byDest.entries) {
+      final depth = '/node_modules/'.allMatches(entry.key).length;
+      (byDepth[depth] ??= []).add(entry);
     }
-    await materializer.materializeAll(tasks);
-    mark('materialize (${chosen.length} packages)');
+    var materialized = 0;
+    for (final depth in byDepth.keys.toList()..sort()) {
+      final tasks = <MaterializeTask>[];
+      for (final entry in byDepth[depth]!) {
+        final dest = p.join(
+          nodeModulesRoot,
+          p.joinAll(p.posix.split(entry.key)),
+        );
+        if (Directory(dest).existsSync()) continue;
+        tasks.add(
+          MaterializeTask(integrity: entry.value.tarballSha512Hex, dest: dest),
+        );
+      }
+      await materializer.materializeAll(tasks);
+      materialized += tasks.length;
+    }
+    mark('materialize ($materialized packages)');
 
-    for (final spec in chosen.values) {
+    // Bin shims live in the `.bin` of the node_modules directory that
+    // contains the package (top-level for hoisted packages, the nested
+    // `<parent>/node_modules/.bin` for nested ones), matching npm.
+    for (final entry in byDest.entries) {
+      final spec = entry.value;
+      if (spec.bin.isEmpty) continue;
+      final pkgDir = p.join(
+        nodeModulesRoot,
+        p.joinAll(p.posix.split(entry.key)),
+      );
+      final binDir = p.join(p.dirname(pkgDir), '.bin');
       for (final bin in spec.bin.entries) {
         _createBinShim(
-          source: p.join(nodeModulesRoot, spec.name, bin.value),
-          linkPath: p.join(binsRoot, bin.key),
+          source: p.join(pkgDir, bin.value),
+          linkPath: p.join(binDir, bin.key),
         );
       }
     }
@@ -84,6 +107,7 @@ class HoistedLinker {
 
   void _createBinShim({required String source, required String linkPath}) {
     if (Link(linkPath).existsSync() || File(linkPath).existsSync()) return;
+    Directory(p.dirname(linkPath)).createSync(recursive: true);
     if (Platform.isWindows) {
       File(
         '$linkPath.cmd',
@@ -92,14 +116,5 @@ class HoistedLinker {
     }
     File(linkPath).writeAsStringSync('#!/bin/sh\nexec node "$source" "\$@"\n');
     chmodExecutable(linkPath);
-  }
-
-  bool _versionGreater(String a, String b) {
-    final pa = a.split('.').map((s) => int.tryParse(s) ?? 0).toList();
-    final pb = b.split('.').map((s) => int.tryParse(s) ?? 0).toList();
-    for (var i = 0; i < pa.length && i < pb.length; i++) {
-      if (pa[i] != pb[i]) return pa[i] > pb[i];
-    }
-    return pa.length > pb.length;
   }
 }

@@ -53,14 +53,18 @@ String writeNpmLockfileToString(
       'peerDependencies': _sortedMap(rootImporter.peerDependencies),
   };
 
-  // One entry per resolved package, keyed by its `node_modules/<name>`
-  // path. Sort by key for deterministic output — `npm` does the same,
-  // which keeps the file diff-friendly across consecutive installs.
-  final sortedIds = lockfile.packages.keys.toList()..sort();
-  for (final id in sortedIds) {
-    final pkg = lockfile.packages[id]!;
-    final key = 'node_modules/${pkg.name}';
-    packages[key] = _serializePackage(pkg);
+  // One entry per resolved package, keyed by its `node_modules/<path>`
+  // location. The path is the tree resolver's placement — `<name>` when
+  // hoisted, or a nested `<parent>/node_modules/<name>` — so two versions
+  // of one name get distinct keys instead of colliding on
+  // `node_modules/<name>`. Sort by key for deterministic, diff-friendly
+  // output, matching npm.
+  final byKey = <String, LockedPackage>{};
+  for (final pkg in lockfile.packages.values) {
+    byKey['node_modules/${pkg.installPath ?? pkg.name}'] = pkg;
+  }
+  for (final key in byKey.keys.toList()..sort()) {
+    packages[key] = _serializePackage(byKey[key]!);
   }
 
   root['packages'] = packages;

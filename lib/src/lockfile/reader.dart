@@ -91,6 +91,9 @@ Lockfile importNpmLockfileFromBytes(Uint8List bytes, {required String path}) {
         scripts: _stringMap(value['_scripts']),
         engines: _stringMap(value['engines']),
         signatures: signatures,
+        installPath: key.startsWith('node_modules/')
+            ? key.substring('node_modules/'.length)
+            : null,
       );
     }
   }
